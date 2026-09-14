@@ -6,11 +6,14 @@ const AuthContext = createContext(null);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState(() => localStorage.getItem('organization_id') || '');
 
   const logout = useCallback(() => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
+    localStorage.removeItem('organization_id');
     setUser(null);
+    setSelectedOrganizationId('');
   }, []);
 
   const fetchUser = useCallback(async (token) => {
@@ -23,6 +26,12 @@ export const AuthProvider = ({ children }) => {
       if (response.ok) {
         const data = await response.json();
         setUser(data);
+        const saved = localStorage.getItem('organization_id');
+        const selected = data.organizations?.some(org => String(org.id) === saved)
+          ? saved : String(data.organizations?.[0]?.id || '');
+        setSelectedOrganizationId(selected);
+        if (selected) localStorage.setItem('organization_id', selected);
+        else localStorage.removeItem('organization_id');
       } else {
         logout();
       }
@@ -69,32 +78,19 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const register = async (username, password, password2, email = '') => {
-    try {
-      const response = await fetch(`${API_BASE}/api/auth/register/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ username, password, password2, email }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(JSON.stringify(error));
-      }
-
-      // After registration, log the user in
-      return await login(username, password);
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
+  const selectOrganization = (id) => {
+    const value = String(id || '');
+    setSelectedOrganizationId(value);
+    if (value) localStorage.setItem('organization_id', value);
+    else localStorage.removeItem('organization_id');
   };
 
   const value = {
     user,
     login,
-    register,
+    refreshUser: () => fetchUser(localStorage.getItem('access_token')),
+    selectedOrganizationId,
+    selectOrganization,
     logout,
     loading,
     isAuthenticated: !!user

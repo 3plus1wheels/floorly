@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: zonechart
+      POSTGRES_USER: zonechart
+      POSTGRES_PASSWORD: zonechart
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "zonechart", "-d", "zonechart"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      SECRET_KEY: docker-development-secret-key-change-before-production
+      DEBUG: "False"
+      DATABASE_URL: postgresql://zonechart:zonechart@db:5432/zonechart
+      ALLOWED_HOSTS: localhost,127.0.0.1,backend,frontend
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      API_PAGINATION_SIZE: "10"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_BASE_URL: ""
+        REACT_APP_FLOORLY_EXTENSION_ID: ${REACT_APP_FLOORLY_EXTENSION_ID:-}
+        REACT_APP_FLOORLY_EXTENSION_STORE_URL: ${REACT_APP_FLOORLY_EXTENSION_STORE_URL:-}
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

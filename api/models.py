@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 # Create your models here.
@@ -45,3 +46,52 @@ class ThemePreference(models.Model):
 
     def __str__(self):
         return f"{self.user.username} theme ({self.preset})"
+
+
+class UserProfile(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile')
+    full_name = models.CharField(max_length=255)
+    must_change_password = models.BooleanField(default=False)
+
+    def __str__(self):
+        return self.full_name
+
+
+class Organization(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class OrganizationMembership(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='organization_memberships')
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='memberships')
+    employee = models.ForeignKey(
+        'schedule.Employee', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='account_memberships',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'organization'], name='unique_organization_membership'),
+            models.UniqueConstraint(
+                fields=['employee'], condition=models.Q(employee__isnull=False),
+                name='unique_employee_account_membership',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.user.username} @ {self.organization.name}'
+
+    def clean(self):
+        super().clean()
+        if self.employee_id and self.organization_id and self.employee.organization_id != self.organization_id:
+            raise ValidationError({'employee': 'Employee must belong to the membership organization.'})

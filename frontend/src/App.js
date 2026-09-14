@@ -4,8 +4,8 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { LoaderCircle } from 'lucide-react';
 import LandingPage from './LandingPage';
 import Login from './Login';
-import Register from './Register';
 import Dashboard from './Dashboard';
+import ChangePassword from './ChangePassword';
 import './App.css';
 
 function AppContent() {
@@ -28,12 +28,11 @@ function AppContent() {
   }
 
   return user ? (
-    <Dashboard />
+    user.must_change_password ? <ChangePassword /> : <Dashboard />
   ) : (
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -42,7 +41,7 @@ function AppContent() {
 function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AppContent />
       </BrowserRouter>
     </AuthProvider>

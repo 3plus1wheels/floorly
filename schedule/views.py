@@ -1,17 +1,22 @@
-import tempfile
-import os
-import traceback as tb
+import hashlib
+import json
+import threading
+import unicodedata
+from datetime import date, datetime, timedelta
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from django.db import transaction
-import openpyxl
+from django.db import IntegrityError, connection, transaction
+from django.utils import timezone
 
 from .models import Employee, Shift, StaffZone, ZONE_FIELDS
 from .serializers import ShiftSerializer, EmployeeSerializer, StaffZoneSerializer
-from .parsers import parse_schedule_xlsx
+from .authentication import ScheduleSyncAuthentication, ScheduleSyncToken
+from .identity import canonical_employee_name, default_workbook_name, workbook_name_parts, employee_summary, find_employee_by_name
+from api.organization_context import organization_for_request
+from api.models import OrganizationMembership, UserProfile
 
 WORKBOOK_HOURS = list(range(8, 21))  # 8 am … 8-9 pm slot
 
@@ -29,36 +34,15 @@ SLOT_SEQUENCE = ['womens', 'mens', 'fits', 'cash', 'fits', 'mens', 'womens', 'gr
 MAIN_ZONE_SLOTS = ['womens', 'mens', 'fits', 'cash']
 
 
-# ---------------------------------------------------------------------------
-# Helper: save uploaded file to a temp path
-# ---------------------------------------------------------------------------
-def _monday_of(records: list) -> str:
-    """Return the ISO Monday date of the earliest shift date in records."""
-    from datetime import timedelta
-    dates = [r['date'] for r in records if r.get('date')]
-    if not dates:
-        return ''
-    earliest = min(dates)
-    # weekday(): Mon=0 … Sun=6
-    monday = earliest - timedelta(days=earliest.weekday())
-    return monday.isoformat()
-
-
-def _save_temp(xlsx_file):
-    with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-        for chunk in xlsx_file.chunks():
-            tmp.write(chunk)
-        return tmp.name
-
-
 class ShiftListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        organization = organization_for_request(request)
         date_filter = request.query_params.get('date')
         week_start = request.query_params.get('week_start')
 
-        shifts = Shift.objects.select_related('employee').all()
+        shifts = Shift.objects.select_related('employee').filter(employee__organization=organization)
 
         if date_filter:
             shifts = shifts.filter(date=date_filter)
@@ -79,90 +63,349 @@ class EmployeeListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        employees = Employee.objects.prefetch_related('shifts').all()
+        organization = organization_for_request(request)
+        employees = Employee.objects.prefetch_related('shifts').filter(organization=organization)
         serializer = EmployeeSerializer(employees, many=True)
         return Response(serializer.data)
 
 
-class ImportScheduleView(APIView):
+_sqlite_sync_lock = threading.Lock()
+
+
+class PayloadError(ValueError):
+    pass
+
+
+def _clean_text(value, field, *, max_length=255, required=True):
+    if not isinstance(value, str):
+        raise PayloadError(f'{field} must be a string')
+    value = value.strip()
+    if required and not value:
+        raise PayloadError(f'{field} must not be empty')
+    if any(ord(character) < 32 for character in value):
+        raise PayloadError(f'{field} contains control characters')
+    if len(value) > max_length:
+        raise PayloadError(f'{field} is too long')
+    return value
+
+
+def _parse_iso_date(value, field):
+    value = _clean_text(value, field, max_length=10)
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise PayloadError(f'{field} must be YYYY-MM-DD') from exc
+    if parsed.isoformat() != value:
+        raise PayloadError(f'{field} must be YYYY-MM-DD')
+    return parsed
+
+
+def _parse_hhmm(value, field):
+    value = _clean_text(value, field, max_length=5)
+    try:
+        parsed = datetime.strptime(value, '%H:%M').time()
+    except ValueError as exc:
+        raise PayloadError(f'{field} must be HH:MM') from exc
+    return parsed
+
+
+def _validate_sync_payload(payload):
+    top_fields = {'source', 'timezone', 'synced_at', 'weeks'}
+    if not isinstance(payload, dict) or set(payload) != top_fields:
+        raise PayloadError('payload must contain source, timezone, synced_at, and weeks')
+    if payload['source'] != 'kronos':
+        raise PayloadError('source must be kronos')
+    if payload['timezone'] != 'America/Edmonton':
+        raise PayloadError('timezone must be America/Edmonton')
+    synced_at = _clean_text(payload['synced_at'], 'synced_at', max_length=64)
+    try:
+        if datetime.fromisoformat(synced_at.replace('Z', '+00:00')).tzinfo is None:
+            raise ValueError
+    except ValueError as exc:
+        raise PayloadError('synced_at must be an ISO 8601 timestamp with timezone') from exc
+    weeks = payload['weeks']
+    if not isinstance(weeks, list) or not 1 <= len(weeks) <= 2:
+        raise PayloadError('weeks must contain one or two weeks')
+
+    records = []
+    starts = []
+    occurrences = {}
+    for week_index, week in enumerate(weeks):
+        if not isinstance(week, dict) or set(week) != {'week_start', 'week_end', 'shifts'}:
+            raise PayloadError(f'weeks[{week_index}] must contain week_start, week_end, and shifts')
+        week_start = _parse_iso_date(week['week_start'], f'weeks[{week_index}].week_start')
+        if week_start.weekday() != 0:
+            raise PayloadError('week_start must be a Monday')
+        week_end = _parse_iso_date(week['week_end'], f'weeks[{week_index}].week_end')
+        if week_end != week_start + timedelta(days=6):
+            raise PayloadError('week_end must be Sunday following week_start')
+        starts.append(week_start)
+        shifts = week['shifts']
+        if not isinstance(shifts, list) or not shifts:
+            raise PayloadError('each week must contain at least one shift')
+        for shift_index, item in enumerate(shifts):
+            if not isinstance(item, dict):
+                raise PayloadError('each shift must be an object')
+            allowed = {'employee_name', 'primary_job', 'date', 'start_time', 'end_time', 'role'}
+            required = {'employee_name', 'date', 'start_time', 'end_time', 'role'}
+            if set(item) - allowed or not required <= set(item):
+                raise PayloadError('shift has missing or unknown fields')
+            name = _clean_text(item['employee_name'], 'employee_name')
+            role = _clean_text(item['role'], 'role')
+            primary_job = (
+                _clean_text(item['primary_job'], 'primary_job', required=False)
+                if 'primary_job' in item else None
+            )
+            shift_date = _parse_iso_date(item['date'], f'weeks[{week_index}].shifts[{shift_index}].date')
+            if not week_start <= shift_date <= week_end:
+                raise PayloadError('shift date must fall within its week')
+            start_time = _parse_hhmm(item['start_time'], 'start_time')
+            end_time = _parse_hhmm(item['end_time'], 'end_time')
+            if end_time <= start_time:
+                raise PayloadError('end_time must be after start_time')
+            key = (name.casefold(), shift_date, start_time)
+            occurrence = occurrences.get(key, 0)
+            occurrences[key] = occurrence + 1
+            records.append({
+                'name': name, 'primary_job': primary_job, 'date': shift_date,
+                'start_time': start_time, 'end_time': end_time, 'role': role,
+                'day_label': shift_date.strftime('%a'), 'occurrence': occurrence,
+            })
+    if len(starts) == 2 and starts[1] != starts[0] + timedelta(days=7):
+        raise PayloadError('weeks must be consecutive and ordered')
+    return records, starts[0], starts[-1] + timedelta(days=6)
+
+
+def _canonical_hash(records):
+    canonical = [
+        {key: value.isoformat() if hasattr(value, 'isoformat') else value for key, value in record.items()}
+        for record in records
+    ]
+    canonical.sort(key=lambda item: (item['date'], item['name'].casefold(), item['start_time'], item['occurrence']))
+    return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+class CurrentEmployeeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _membership(request, organization):
+        membership = OrganizationMembership.objects.filter(user=request.user, organization=organization).select_related('employee').first()
+        if membership is None and request.user.is_staff:
+            membership = OrganizationMembership.objects.create(user=request.user, organization=organization)
+        return membership
+
+    @staticmethod
+    def _profile_name(user):
+        profile, _ = UserProfile.objects.get_or_create(
+            user=user, defaults={'full_name': user.get_full_name().strip() or user.username})
+        return profile.full_name.strip() or user.get_full_name().strip() or user.username
+
+    @staticmethod
+    def _available_employees(organization):
+        return list(
+            Employee.objects.filter(organization=organization)
+            .exclude(role_override='non_active')
+            .filter(account_memberships__isnull=True)
+            .order_by('name')
+        )
+
+    def _response(self, membership, profile_name, candidates, *, auto_matched=False, can_create=None):
+        return Response({
+            'linked_employee': employee_summary(membership.employee),
+            'auto_matched': auto_matched,
+            'candidates': [employee_summary(employee) for employee in candidates],
+            'profile_full_name': profile_name,
+            'can_create_from_profile': membership.employee_id is None if can_create is None else can_create,
+        })
+
+    def get(self, request):
+        organization = organization_for_request(request)
+        membership = self._membership(request, organization)
+        if membership is None:
+            return Response({'code': 'membership_denied', 'detail': 'You do not belong to this organization.'}, status=status.HTTP_403_FORBIDDEN)
+        profile_name = self._profile_name(request.user)
+        candidates = self._available_employees(organization)
+        if membership.employee_id is None:
+            key = canonical_employee_name(profile_name)
+            matches = [employee for employee in candidates if canonical_employee_name(employee.name) == key]
+            if len(matches) == 1:
+                try:
+                    membership.employee = matches[0]
+                    membership.save(update_fields=['employee'])
+                except IntegrityError:
+                    membership.refresh_from_db()
+                else:
+                    candidates = self._available_employees(organization)
+                    return self._response(membership, profile_name, candidates, auto_matched=True)
+            if len(matches) > 1:
+                return self._response(membership, profile_name, candidates, can_create=False)
+        return self._response(membership, profile_name, candidates)
+
+    def put(self, request):
+        organization = organization_for_request(request)
+        membership = self._membership(request, organization)
+        if membership is None:
+            return Response({'code': 'membership_denied', 'detail': 'You do not belong to this organization.'}, status=status.HTTP_403_FORBIDDEN)
+        if membership.employee_id is not None:
+            return Response({'code': 'employee_link_locked', 'detail': 'Employee identity is already linked. Ask an administrator to change it.'}, status=status.HTTP_409_CONFLICT)
+        employee_id = request.data.get('employee_id')
+        create_from_profile = request.data.get('create_from_profile') is True
+        if (employee_id is None) == (not create_from_profile):
+            return Response({'detail': 'Provide either employee_id or create_from_profile.'}, status=status.HTTP_400_BAD_REQUEST)
+        if employee_id is not None:
+            try:
+                employee_id = int(employee_id)
+            except (TypeError, ValueError):
+                return Response({'detail': 'employee_id must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+        profile_name = self._profile_name(request.user)
+        try:
+            with transaction.atomic():
+                membership = OrganizationMembership.objects.select_for_update().get(pk=membership.pk)
+                if membership.employee_id is not None:
+                    return Response({'code': 'employee_link_locked', 'detail': 'Employee identity is already linked. Ask an administrator to change it.'}, status=status.HTTP_409_CONFLICT)
+                if create_from_profile:
+                    try:
+                        employee = find_employee_by_name(organization, profile_name)
+                    except ValueError as exc:
+                        return Response({'code': 'employee_match_ambiguous', 'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+                    if employee is None:
+                        employee = Employee.objects.create(organization=organization, name=profile_name)
+                    elif employee.role_override == 'non_active':
+                        return Response({'detail': 'Inactive employee cannot be linked by a user.'}, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    employee = Employee.objects.filter(pk=employee_id, organization=organization).exclude(role_override='non_active').first()
+                    if employee is None:
+                        return Response({'detail': 'Employee is not available in this organization.'}, status=status.HTTP_400_BAD_REQUEST)
+                if OrganizationMembership.objects.filter(employee=employee).exclude(pk=membership.pk).exists():
+                    return Response({'code': 'employee_already_linked', 'detail': 'Employee is already linked to another account.'}, status=status.HTTP_409_CONFLICT)
+                membership.employee = employee
+                membership.save(update_fields=['employee'])
+        except (IntegrityError, ValueError):
+            return Response({'code': 'employee_already_linked', 'detail': 'Employee is already linked to another account.'}, status=status.HTTP_409_CONFLICT)
+        return Response({'linked_employee': employee_summary(employee)})
+
+
+class ScheduleSyncView(APIView):
+    """Atomically replace shifts in one or two complete weeks for an authenticated user."""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [ScheduleSyncAuthentication]
+
+    def post(self, request):
+        organization = organization_for_request(request)
+        try:
+            ticket_organization_id = int(request.auth.get('organization_id'))
+        except (TypeError, ValueError):
+            return Response({'error': 'Schedule sync ticket has no valid organization.'}, status=status.HTTP_403_FORBIDDEN)
+        if ticket_organization_id != organization.id:
+            return Response({'error': 'Schedule sync ticket belongs to another organization.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            records, range_start, range_end = _validate_sync_payload(request.data)
+        except PayloadError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        membership = OrganizationMembership.objects.filter(
+            user=request.user, organization=organization).select_related('employee').first()
+        has_current_user_row = any(canonical_employee_name(record['name']) == 'my schedule' for record in records)
+        if has_current_user_row and (membership is None or membership.employee_id is None):
+            return Response({
+                'code': 'employee_link_required',
+                'detail': 'Choose your employee identity before importing My Schedule.',
+            }, status=status.HTTP_409_CONFLICT)
+
+        lock = _sqlite_sync_lock if connection.vendor == 'sqlite' else None
+        if lock:
+            lock.acquire()
+        try:
+            with transaction.atomic():
+                if connection.vendor == 'postgresql':
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", [f'schedule-sync-{organization.id}'])
+                        if not cursor.fetchone()[0]:
+                            return Response({'ok': True, 'skipped': 'sync_in_progress'})
+
+                counts = {'employees_created': 0, 'employees_updated': 0, 'shifts_created': 0, 'shifts_updated': 0, 'shifts_deleted': 0}
+                occurrences = {}
+                for record in records:
+                    if canonical_employee_name(record['name']) == 'my schedule':
+                        employee = membership.employee
+                    else:
+                        try:
+                            employee = find_employee_by_name(organization, record['name'])
+                        except ValueError as exc:
+                            raise PayloadError(str(exc)) from exc
+                    if employee is None:
+                        employee = Employee.objects.create(
+                            organization=organization, name=record['name'], primary_job=record['primary_job'] or '')
+                        counts['employees_created'] += 1
+                    elif record['primary_job'] is not None and employee.primary_job != record['primary_job']:
+                        employee.primary_job = record['primary_job']
+                        employee.save(update_fields=['primary_job'])
+                        counts['employees_updated'] += 1
+                    occurrence_key = (employee.id, record['date'], record['start_time'])
+                    record['occurrence'] = occurrences.get(occurrence_key, 0)
+                    occurrences[occurrence_key] = record['occurrence'] + 1
+                    record['employee'] = employee
+                    record['name'] = employee.name
+
+                existing = {
+                    (shift.employee_id, shift.date, shift.start_time, shift.occurrence): shift
+                    for shift in Shift.objects.filter(employee__organization=organization, date__range=(range_start, range_end))
+                }
+                wanted = {(r['employee'].id, r['date'], r['start_time'], r['occurrence']) for r in records}
+                stale_ids = [shift.id for key, shift in existing.items() if key not in wanted]
+                deleted, _ = Shift.objects.filter(id__in=stale_ids).delete()
+                counts['shifts_deleted'] = deleted
+                for record in records:
+                    shift, shift_created = Shift.objects.get_or_create(
+                        employee=record['employee'], date=record['date'], start_time=record['start_time'], occurrence=record['occurrence'],
+                        defaults={key: record[key] for key in ('end_time', 'day_label', 'role')},
+                    )
+                    if shift_created:
+                        counts['shifts_created'] += 1
+                    else:
+                        changed = []
+                        for field in ('end_time', 'day_label', 'role'):
+                            if getattr(shift, field) != record[field]:
+                                setattr(shift, field, record[field])
+                                changed.append(field)
+                        if changed:
+                            shift.save(update_fields=changed)
+                            counts['shifts_updated'] += 1
+        except PayloadError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        finally:
+            if lock:
+                lock.release()
+
+        digest = _canonical_hash([{key: value for key, value in record.items() if key != 'employee'} for record in records])
+        completed_at = timezone.now().isoformat()
+        return Response({
+            'ok': True,
+            **counts,
+            'counts': counts,
+            'shifts_received': len(records),
+            'range_start': range_start.isoformat(),
+            'range_end': range_end.isoformat(),
+            'hash': digest,
+            'payload_hash': digest,
+            'timestamp': completed_at,
+            'synced_at': completed_at,
+        })
+
+
+class ScheduleSyncTicketView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        xlsx_file = request.FILES.get('file')
-        if not xlsx_file:
-            return Response({'error': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not xlsx_file.name.endswith('.xlsx'):
-            return Response({'error': 'File must be an .xlsx file.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        clear = request.data.get('clear', 'false').lower() == 'true'
-
-        tmp_path = _save_temp(xlsx_file)
-
-        try:
-            records = parse_schedule_xlsx(tmp_path)
-        except Exception as exc:
-            trace = tb.format_exc()
-            return Response(
-                {'error': f'Failed to parse XLSX: {exc}', 'traceback': trace},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-
-        parsed_count = len(records)
-        if not records:
-            return Response({
-                'message': 'No shifts found in file. The XLSX layout may not match the expected format.',
-                'shifts_created': 0,
-                'shifts_updated': 0,
-                'employees_created': 0,
-                'parsed_count': 0,
-            })
-
-        employees_created = 0
-        shifts_created = 0
-        shifts_updated = 0
-
-        with transaction.atomic():
-            if clear:
-                Shift.objects.all().delete()
-
-            for record in records:
-                if not record.get('date'):
-                    continue
-
-                employee, emp_new = Employee.objects.update_or_create(
-                    name=record['employee_name'],
-                    defaults={'primary_job': record['primary_job']},
-                )
-                if emp_new:
-                    employees_created += 1
-
-                _, shift_new = Shift.objects.update_or_create(
-                    employee=employee,
-                    date=record['date'],
-                    start_time=record['start_time'],
-                    defaults={
-                        'end_time': record['end_time'],
-                        'day_label': record['day_label'],
-                        'role': record['role'],
-                    },
-                )
-                if shift_new:
-                    shifts_created += 1
-                else:
-                    shifts_updated += 1
-
+        organization = organization_for_request(request)
+        token = ScheduleSyncToken.for_user(request.user)
+        token['organization_id'] = organization.id
         return Response({
-            'message': 'Import successful.',
-            'employees_created': employees_created,
-            'shifts_created': shifts_created,
-            'shifts_updated': shifts_updated,
-            'parsed_count': parsed_count,
-            'week_start': _monday_of(records),
-        }, status=status.HTTP_201_CREATED)
+            'ticket': str(token),
+            'token_type': 'ScheduleSync',
+            'expires_in': int(ScheduleSyncToken.lifetime.total_seconds()),
+        })
 
 
 class WorkbookView(APIView):
@@ -171,6 +414,7 @@ class WorkbookView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        organization = organization_for_request(request)
         from datetime import datetime, timedelta
         week_start = request.query_params.get('week_start')
         day = request.query_params.get('day', 'Mon')
@@ -188,7 +432,8 @@ class WorkbookView(APIView):
 
         shifts = (
             Shift.objects.select_related('employee')
-            .filter(date=target_date)
+            .filter(employee__organization=organization, date=target_date)
+            .exclude(employee__role_override='non_active')
             .order_by('start_time')
         )
 
@@ -196,19 +441,20 @@ class WorkbookView(APIView):
             ah = h % 12 or 12
             return f"{ah}:{m:02d}" if m else str(ah)
 
-        def _name_parts(raw):
-            """Return (first, last_initial) from 'Last, First' format."""
-            if ',' in raw:
-                last, first = raw.split(',', 1)
-                return first.strip().upper(), last.strip()[0].upper() if last.strip() else ''
-            return raw.strip().upper(), ''
-
         # Determine which first names are shared so we can disambiguate
         shifts = list(shifts)  # evaluate queryset once
+        role_overrides = {'associate': 'Stylist', 'management': 'CEL'}
+        for shift in shifts:
+            shift.effective_role = role_overrides.get(shift.employee.role_override, shift.role)
         # Sort: non-BOH by start_time first, BOH shifts always last
-        shifts.sort(key=lambda s: (1 if s.role == 'BOH' else 0, s.start_time))
+        shifts.sort(key=lambda s: (1 if s.effective_role == 'BOH' else 0, s.start_time))
         from collections import Counter
-        first_name_counts = Counter(_name_parts(s.employee.name)[0] for s in shifts)
+        distinct_employees = {shift.employee_id: shift.employee for shift in shifts}
+        default_name_counts = Counter(
+            default_workbook_name(employee.name)
+            for employee in distinct_employees.values()
+            if not employee.workbook_name
+        )
 
         # --- Zone assignment for Stylists ---
         # For each hour, rank available Stylists by skill level in each slot
@@ -229,7 +475,7 @@ class WorkbookView(APIView):
         for h in WORKBOOK_HOURS:
             stylists_this_hour = [
                 s for s in shifts
-                if s.role == 'Stylist'
+                if s.effective_role == 'Stylist'
                 and (s.start_time.hour * 60 + s.start_time.minute) < (h + 1) * 60
                 and (s.end_time.hour   * 60 + s.end_time.minute)   > h * 60
             ]
@@ -258,7 +504,7 @@ class WorkbookView(APIView):
         # then fewest total CEL hours, then latest end_time as tiebreaker.
         cel_consecutive = {}   # {employee_id: int} resets when not working or assigned FLEX
         cel_total       = {}   # {employee_id: int} cumulative CEL hours
-        all_mgr_ids = {s.employee_id for s in shifts if s.role == 'CEL'}
+        all_mgr_ids = {s.employee_id for s in shifts if s.effective_role == 'CEL'}
 
         # Store opens at 11am Sunday, 10am every other day
         store_open_hour = 11 if day == 'Sun' else 10
@@ -266,7 +512,7 @@ class WorkbookView(APIView):
         for h in reversed(WORKBOOK_HOURS):
             managers_this_hour = [
                 s for s in shifts
-                if s.role == 'CEL'
+                if s.effective_role == 'CEL'
                 and (s.start_time.hour * 60 + s.start_time.minute) < (h + 1) * 60
                 and (s.end_time.hour   * 60 + s.end_time.minute)   > h * 60
             ]
@@ -329,21 +575,27 @@ class WorkbookView(APIView):
             zones = {}
             for h in WORKBOOK_HOURS:
                 if start_min < (h + 1) * 60 and end_min > h * 60:
-                    if shift.role == 'BOH':
+                    if shift.effective_role == 'BOH':
                         zones[str(h)] = 'BOH'
                     else:
-                        zones[str(h)] = hour_assignments.get(h, {}).get(shift.employee_id, shift.role.upper())
+                        zones[str(h)] = hour_assignments.get(h, {}).get(shift.employee_id, shift.effective_role.upper())
 
-            # Name stored as "Last, First" — show first name; add last initial if duplicate
             raw = shift.employee.name
-            first, last_initial = _name_parts(raw)
-            display = f"{first} {last_initial}" if first_name_counts[first] > 1 and last_initial else first
+            employee = shift.employee
+            if employee.workbook_name:
+                display = employee.workbook_name.upper()
+            else:
+                first, last_initial = workbook_name_parts(raw)
+                display = (
+                    f"{first} {last_initial}"
+                    if default_name_counts[first] > 1 and last_initial else first
+                )
 
             rows.append({
                 'name': display,
                 'full_name': raw,
                 'shift': shift_label,
-                'role': shift.role,
+                'role': shift.effective_role,
                 'zones': zones,
             })
 
@@ -362,108 +614,68 @@ class StaffZoneView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, employee_id=None):
+        organization = organization_for_request(request)
         # Auto-create StaffZone rows for any Employee that lacks one
-        employees = Employee.objects.all().order_by('name')
+        employees = Employee.objects.filter(organization=organization).order_by('name')
         for emp in employees:
             StaffZone.objects.get_or_create(employee=emp)
-        zones = StaffZone.objects.select_related('employee').order_by('employee__name')
+        zones = StaffZone.objects.select_related('employee').filter(employee__organization=organization).order_by('employee__name')
         return Response(StaffZoneSerializer(zones, many=True).data)
 
     def patch(self, request, employee_id):
+        organization = organization_for_request(request)
         try:
-            zone = StaffZone.objects.get(employee_id=employee_id)
+            zone = StaffZone.objects.get(employee_id=employee_id, employee__organization=organization)
         except StaffZone.DoesNotExist:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
-        data = {k: v for k, v in request.data.items() if k in ZONE_FIELDS}
-        for field, value in data.items():
-            setattr(zone, field, int(value))
-        zone.save(update_fields=list(data.keys()))
-        return Response(StaffZoneSerializer(zone).data)
-
-
-class InspectScheduleView(APIView):
-    """POST an XLSX — returns raw sheet structure and first parsed records for debugging."""
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        xlsx_file = request.FILES.get('file')
-        if not xlsx_file:
-            return Response({'error': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        tmp_path = _save_temp(xlsx_file)
-        result = {}
-
-        try:
-            # Raw sheet peek
-            wb = openpyxl.load_workbook(tmp_path, data_only=False)
-            sheets = []
-            for ws in wb.worksheets:
-                rows_preview = []
-                for row in ws.iter_rows(min_row=1, max_row=15, values_only=True):
-                    rows_preview.append([repr(c) if c is not None else None for c in row])
-                sheets.append({'name': ws.title, 'max_row': ws.max_row, 'max_col': ws.max_column, 'preview': rows_preview})
-            result['sheets'] = sheets
-
-            # Trace parse logic
-            from .parsers import (
-                _is_empty, _is_section_header, _is_column_header,
-                _extract_date_cols, _str_cell, TIME_RANGE_RE, _cell,
+        if isinstance(request.data, dict) and 'workbook_name' in request.data and not request.user.is_staff:
+            return Response(
+                {'error': 'Only administrators may change workbook_name'},
+                status=status.HTTP_403_FORBIDDEN,
             )
-            wb2 = openpyxl.load_workbook(tmp_path, data_only=True)
-            trace = []
-            for ws in wb2.worksheets:
-                raw_rows = [tuple(ws[rn]) for rn in range(1, ws.max_row + 1)]
-                day_dates = {}
-                day_cols  = {}
-                for ri, row in enumerate(raw_rows):
-                    row_label = ri + 1
-                    if _is_empty(row):
-                        trace.append({'row': row_label, 'type': 'empty'})
-                        continue
-                    if _is_section_header(row):
-                        trace.append({'row': row_label, 'type': 'section_header', 'val': _str_cell(row, 0)})
-                        continue
-                    if _is_column_header(row):
-                        date_row = raw_rows[ri + 1] if ri + 1 < len(raw_rows) else None
-                        if date_row is not None:
-                            day_dates, day_cols = _extract_date_cols(date_row)
-                        date_row_raw = [repr(_cell(date_row, ci)) for ci in range(len(date_row))] if date_row is not None else []
-                        trace.append({
-                            'row': row_label, 'type': 'col_header',
-                            'day_dates': {k: str(v) for k, v in day_dates.items()},
-                            'day_cols': day_cols,
-                            'date_row_raw': date_row_raw,
-                        })
-                        continue
-                    name = _str_cell(row, 0)
-                    if name:
-                        time_cells = {}
-                        for day, tc in day_cols.items():
-                            raw = _str_cell(row, tc)
-                            m = TIME_RANGE_RE.search(raw) if raw else None
-                            time_cells[day] = {
-                                'col': tc,
-                                'raw': repr(raw),
-                                'matched': bool(m),
-                                'groups': list(m.groups()) if m else None,
-                            }
-                        trace.append({'row': row_label, 'type': 'employee', 'name': name, 'job': _str_cell(row, 3), 'time_cells': time_cells})
-                    else:
-                        trace.append({'row': row_label, 'type': 'continuation', 'col0': repr(_str_cell(row, 0))})
-            result['trace'] = trace[:40]  # limit
+        allowed_fields = set(ZONE_FIELDS) | {'role_override'}
+        if isinstance(request.data, dict) and 'workbook_name' in request.data and request.user.is_staff:
+            allowed_fields.add('workbook_name')
+        if not isinstance(request.data, dict) or not request.data or set(request.data) - allowed_fields:
+            return Response({'error': 'Only zone levels, role_override, and staff-only workbook_name may be changed'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Parser output
-            records = parse_schedule_xlsx(tmp_path)
-            result['parsed_count'] = len(records)
-            result['sample_records'] = [
-                {k: str(v) for k, v in r.items()} for r in records[:10]
-            ]
-        except Exception as exc:
-            import traceback
-            result['error'] = str(exc)
-            result['traceback'] = traceback.format_exc()
-        finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+        zone_updates = {}
+        for field in ZONE_FIELDS:
+            if field not in request.data:
+                continue
+            try:
+                value = int(request.data[field])
+            except (TypeError, ValueError):
+                return Response({'error': f'{field} must be an integer from 0 to 3'}, status=status.HTTP_400_BAD_REQUEST)
+            if value not in range(4):
+                return Response({'error': f'{field} must be from 0 to 3'}, status=status.HTTP_400_BAD_REQUEST)
+            zone_updates[field] = value
 
-        return Response(result)
+        workbook_name = None
+        if 'workbook_name' in request.data:
+            workbook_name = request.data['workbook_name']
+            if not isinstance(workbook_name, str):
+                return Response({'error': 'workbook_name must be a string'}, status=status.HTTP_400_BAD_REQUEST)
+            if any(unicodedata.category(character) == 'Cc' for character in workbook_name):
+                return Response({'error': 'workbook_name cannot contain control characters'}, status=status.HTTP_400_BAD_REQUEST)
+            workbook_name = ' '.join(workbook_name.split())
+            if len(workbook_name) > 64:
+                return Response({'error': 'workbook_name must be at most 64 characters'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if 'role_override' in request.data:
+            role_override = request.data['role_override']
+            valid_roles = {choice[0] for choice in Employee.ROLE_OVERRIDE_CHOICES}
+            if role_override not in valid_roles:
+                return Response({'error': 'role_override must be auto, associate, management, or non_active'}, status=status.HTTP_400_BAD_REQUEST)
+            zone.employee.role_override = role_override
+            zone.employee.save(update_fields=['role_override'])
+
+        if workbook_name is not None:
+            zone.employee.workbook_name = workbook_name
+            zone.employee.save(update_fields=['workbook_name'])
+
+        for field, value in zone_updates.items():
+            setattr(zone, field, value)
+        if zone_updates:
+            zone.save(update_fields=list(zone_updates))
+        return Response(StaffZoneSerializer(zone).data)

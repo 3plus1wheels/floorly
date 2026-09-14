@@ -48,3 +48,7 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+node_modules/
+extension/dist/
+extension/floorly-kronos-*.zip
+.env.compose

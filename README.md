@@ -1,191 +1,109 @@
-# Django + React Full Stack Project
+# Floorly
 
-A full-stack web application with Django REST API backend and React frontend.
+React schedule workbook with Django/PostgreSQL backend. Kronos import runs from minimal Chrome extension against user’s already-authenticated Kronos tab. XLSX remains CLI recovery path.
 
-## Project Structure
+## First start
 
-```
-├── backend/           # Django project settings
-├── api/              # Django REST API app
-├── frontend/         # React application
-├── manage.py         # Django management script
-├── .env              # Environment variables (not in git)
-├── .env.example      # Environment variables template
-└── requirements.txt  # Python dependencies
-```
-
-## Backend (Django + REST Framework)
-
-### Features
-- Django 6.0.2
-- Django REST Framework
-- **JWT Authentication** (djangorestframework-simplejwt)
-- User registration and login
-- CORS headers configured for React
-- Sample Item model with CRUD operations
-- **PostgreSQL database (Neon)**
-- Environment-based configuration
-
-### API Endpoints
-
-#### Authentication
-- `POST /api/auth/register/` - Register new user
-- `POST /api/auth/login/` - Login (returns JWT tokens)
-- `POST /api/auth/refresh/` - Refresh access token
-- `GET /api/auth/user/` - Get current user info (requires auth)
-
-#### Items
-- `GET /api/items/` - List all items
-- `POST /api/items/` - Create new item
-- `GET /api/items/{id}/` - Get specific item
-- `PUT /api/items/{id}/` - Update item
-- `PATCH /api/items/{id}/` - Partial update item
-- `DELETE /api/items/{id}/` - Delete item
-- `GET /api/items/active/` - Get only active items
-
-### Running the Backend
+Requirement: Docker Desktop.
 
 ```bash
-# Activate virtual environment
-.venv\Scripts\activate
-
-# Run development server
-python manage.py runserver
+cp .env.example .env
+docker compose up --build
 ```
 
-Backend will be available at: http://127.0.0.1:8000/
+Open <http://localhost:3000>. Backend health: <http://localhost:8000/health/>.
 
-Admin panel: http://127.0.0.1:8000/admin/
-API root: http://127.0.0.1:8000/api/
-
-## Frontend (React)
-
-### Features
-- React 18
-- **JWT Authentication** with login/register pages
-- Protected routes (requires authentication)
-- User session management
-- Modern JavaScript (ES6+)
-- Context API for state management
-- Connected to Django REST API
-
-### Running the Frontend
+Create first platform admin:
 
 ```bash
-cd frontend
-npm start
+docker compose exec backend python manage.py createsuperuser
 ```
 
-Frontend will be available at: http://localhost:3000/
-
-## Getting Started
-
-### 1. Start the Backend
+Sign in, open **Admin**, create organization, then create users with temporary passwords. Users must change temporary password at first login. Database persists in `postgres-data` volume.
 
 ```bash
-# From project root
-python manage.py runserver
+docker compose down
 ```
 
-### 2. Start the Frontend
+`docker compose down --volumes` also erases local database.
+
+## Kronos Chrome extension
+
+Extension stores no credentials, cookies, browser profiles, or Floorly access tokens. User completes Kronos SSO/MFA in normal Chrome. Each import uses five-minute, organization-scoped ticket.
+
+### Local development
+
+Requirements: Chrome desktop, Node.js 20+, `zip` command.
 
 ```bash
-# In a new terminal
-cd frontend
-npm start
+npm install
+npm run extension:build
 ```
 
-### 3. Create Admin User (Optional)
+Then:
+
+1. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, select `extension/dist`.
+2. Copy extension ID shown by Chrome into `.env` as `REACT_APP_FLOORLY_EXTENSION_ID`.
+3. Rebuild app: `docker compose up --build`.
+4. Log into Kronos in normal Chrome and open **My Location Schedule**.
+5. Open same week in Floorly and Kronos, then click **Import from Kronos**.
+
+Import is not tied to current week. Floorly sends selected week, extension verifies Kronos date headers match, then replaces only that week. If weeks differ, nothing uploads. If no Kronos tab exists, first click opens fixed schedule URL; log in, choose week, wait for rows, then retry.
+
+Changing extension code requires `npm run extension:build`, then **Reload** on `chrome://extensions`. Changing extension ID requires frontend rebuild.
+
+### Production / unlisted Chrome Web Store
+
+Build with exact deployed domains and bumped version:
 
 ```bash
-python manage.py createsuperuser
+FLOORLY_WEB_ORIGINS=https://floorly.example.com \
+FLOORLY_API_ORIGINS=https://api.floorly.example.com \
+EXTENSION_VERSION=1.0.1 \
+npm run extension:build
 ```
 
-## Authentication
+Upload generated `extension/floorly-kronos-1.0.1.zip` as unlisted Chrome Web Store release. Manifest grants only Floorly, backend, and Kronos origins plus `tabs`; no cookies, history, or `<all_urls>` permission.
 
-The app features JWT-based authentication:
+After Web Store assigns stable ID, set these Vercel build variables and redeploy frontend:
 
-1. **First Time**: Register a new account through the React frontend
-2. **Login**: Use your credentials to log in
-3. **Session**: Your session is maintained using JWT tokens stored in localStorage
-4. **Protected Routes**: The dashboard is only accessible when authenticated
+```env
+REACT_APP_FLOORLY_EXTENSION_ID=assigned_extension_id
+REACT_APP_FLOORLY_EXTENSION_STORE_URL=https://chromewebstore.google.com/detail/assigned_extension_id
+REACT_APP_API_BASE_URL=https://api.floorly.example.com
+```
 
-### Testing Authentication via API
+Domain changes require new extension build/review because allowed origins are compiled into manifest. Full config examples: [.env.example](.env.example).
+
+If Compose warns that part of a secret “variable is not set,” single-quote that `.env` value; unquoted `$NAME` is Compose interpolation.
+
+## Tests
 
 ```bash
-# Register a new user
-curl -X POST http://127.0.0.1:8000/api/auth/register/ \
-  -H "Content-Type: application/json" \
-  -d '{"username": "testuser", "password": "testpass123", "password2": "testpass123", "email": "test@example.com"}'
-
-# Login to get tokens
-curl -X POST http://127.0.0.1:8000/api/auth/login/ \
-  -H "Content-Type: application/json" \
-  -d '{"username": "testuser", "password": "testpass123"}'
-
-# Use the access token to get user info
-curl http://127.0.0.1:8000/api/auth/user/ \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+npm test
+npm --prefix frontend test -- --watchAll=false
+npm --prefix frontend run build
+docker compose exec backend python manage.py test
 ```
 
-## Development
+Extension package smoke test:
 
-### Adding New API Endpoints
-
-1. Define models in `api/models.py`
-2. Create serializers in `api/serializers.py`
-3. Add views in `api/views.py`
-4. Register routes in `api/urls.py`
-5. Run migrations:
-   ```bash
-   python manage.py makemigrations
-   python manage.py migrate
-   ```
-
-### Making Requests from React
-
-```javascript
-// Example: Fetch items from API
-fetch('http://127.0.0.1:8000/api/items/')
-  .then(response => response.json())
-  .then(data => console.log(data));
+```bash
+npm run extension:build
 ```
 
-## Technologies Used
+## XLSX recovery import
 
-### Backend
-- Python 3.13
-- Django 6.0.2
-- Django REST Framework
-- djangorestframework-simplejwt (JWT Authentication)
-- django-cors-headers
-- PostgreSQL (Neon)
-- psycopg2-binary
-- python-dotenv
-- dj-database-url
-- dj-database-url
+Web upload remains disabled.
 
-### Frontend
-- React 18
-- JavaScript (ES6+)
-- npm/npx
+```bash
+docker compose exec backend python manage.py import_schedule /path/in/container/schedule.xlsx --organization-id 1
+```
 
-## Environment Variables
+Use `--clear` only when selected organization’s shifts should be removed first.
 
-The project uses environment variables for configuration. Copy `.env.example` to `.env` and update:
+## Containers
 
-- `SECRET_KEY`: Django secret key (change in production)
-- `DEBUG`: Debug mode (True/False)
-- `ALLOWED_HOSTS`: Comma-separated list of allowed hosts
-- `DATABASE_URL`: Neon Postgres connection string
-- `CORS_ALLOWED_ORIGINS`: Comma-separated list of allowed CORS origins
-- `API_PAGINATION_SIZE`: Number of items per page in API pagination
-
-## Notes
-
-- CORS is configured via `.env` to allow requests from React frontend
-- The backend uses **Neon PostgreSQL** for production-ready database hosting
-- SSL mode is required for Neon connections
-- Debug mode is ON by default (disable for production in `.env`)
-- Never commit your `.env` file to version control
-- Update `SECRET_KEY` in `.env` before deploying to production
+- `frontend`: React build served by Nginx on port 3000; proxies `/api/` to Django.
+- `backend`: Django/Gunicorn on port 8000; applies migrations and collects static files on startup.
+- `db`: PostgreSQL 17 with persistent volume.

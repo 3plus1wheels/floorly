@@ -1,0 +1,36 @@
+FROM python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DEBUG=False \
+    PORT=8000 \
+    GUNICORN_WORKERS=3 \
+    GUNICORN_TIMEOUT=60
+
+WORKDIR /app
+
+COPY requirements.txt /tmp/requirements.utf16.txt
+RUN python -c "from pathlib import Path; source = Path('/tmp/requirements.utf16.txt'); Path('/tmp/requirements.txt').write_text(source.read_text(encoding='utf-16'), encoding='utf-8')" \
+    && pip install --no-cache-dir --disable-pip-version-check -r /tmp/requirements.txt \
+    && rm /tmp/requirements.utf16.txt /tmp/requirements.txt \
+    && addgroup --system django \
+    && adduser --system --ingroup django --home /app django
+
+COPY --chown=django:django manage.py ./
+COPY --chown=django:django api ./api
+COPY --chown=django:django backend ./backend
+COPY --chown=django:django schedule ./schedule
+COPY --chown=django:django backend/entrypoint.sh /entrypoint.sh
+
+RUN chmod 755 /entrypoint.sh \
+    && mkdir -p /app/staticfiles \
+    && chown django:django /app/staticfiles
+
+USER django
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('PORT', '8000') + '/health/', timeout=3)" || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["gunicorn", "backend.wsgi:application"]

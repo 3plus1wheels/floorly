@@ -1,0 +1,37 @@
+[
+  {
+    "headers": [
+      { "colId": "primaryJob", "label": "Primary Job" },
+      { "colId": "day-0", "label": "Mon 09/07" },
+      { "colId": "day-1", "label": "Tue 09/08" },
+      { "colId": "day-2", "label": "Wed 09/09" }
+    ],
+    "rows": [
+      { "rowIndex": "0", "employee_name": "Doe, Jane", "primary_job": "Stylist", "cells": [] },
+      { "rowIndex": "0", "cells": [
+        { "colId": "day-0", "titles": ["11:00 AM - 3:45 PM [4:45]"] },
+        { "colId": "day-1", "titles": ["9:00 AM - 12:00 PM; 1:00 PM - 5:00 PM"] }
+      ] },
+      { "rowIndex": "1", "employee_name": "Boss, Alex", "primary_job": "Store Manager", "cells": [] }
+    ]
+  },
+  {
+    "headers": [
+      { "colId": "day-0", "label": "Monday" },
+      { "colId": "day-1", "label": "Tuesday" },
+      { "colId": "day-2", "label": "Wednesday" }
+    ],
+    "rows": [
+      { "rowIndex": "1", "cells": [{ "colId": "day-2", "titles": ["8:30 AM - 4:30 PM [8:00]"] }] },
+      { "rowIndex": "2", "employee_name": "Stock, Sam", "primary_job": "Shipment", "cells": [] },
+      { "rowIndex": "2", "cells": [{ "colId": "day-0", "titles": ["8:00 AM - 12:45 PM [4:45]"] }] }
+    ]
+  },
+  {
+    "headers": [],
+    "rows": [
+      { "rowIndex": "0", "cells": [{ "colId": "day-0", "titles": ["11:00 AM - 3:45 PM [4:45]"] }] },
+      { "rowIndex": "1", "employee_name": "Boss, Alex", "primary_job": "Store Manager", "cells": [] }
+    ]
+  }
+]

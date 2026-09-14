@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, Inbox, LoaderCircle, Users } from 'lucide-react';
 import API_BASE from './config';
+import { useAuth } from './AuthContext';
 import './Staff.css';
 
 const ZONES = ['mens', 'womens', 'cash', 'fits', 'greet', 'boh'];
@@ -8,6 +9,15 @@ const ZONE_LABELS = ['MENS', 'WOMENS', 'CASH', 'FITS', 'GREET', 'BOH'];
 
 const LEVEL_LABELS = ['No experience', 'Have training', 'Good', 'Expert'];
 const LEVEL_CLASS  = ['lv0', 'lv1', 'lv2', 'lv3'];
+const ROLE_OPTIONS = [
+  { value: 'associate', label: 'Associate' },
+  { value: 'management', label: 'Management' },
+  { value: 'non_active', label: 'Non-active' },
+];
+
+function scrapedRole(primaryJob) {
+  return /manager|management|supervisor|\bcel\b/i.test(primaryJob || '') ? 'Management' : 'Associate';
+}
 
 function displayName(raw) {
   if (!raw) return raw;
@@ -19,6 +29,7 @@ function displayName(raw) {
 }
 
 export default function Staff() {
+  const { selectedOrganizationId } = useAuth();
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
@@ -30,7 +41,7 @@ export default function Staff() {
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/schedule/staff/`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, 'X-Organization-ID': selectedOrganizationId },
       });
       if (!res.ok) throw new Error(`${res.status}`);
       setRows(await res.json());
@@ -40,7 +51,7 @@ export default function Staff() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, selectedOrganizationId]);
 
   useEffect(() => { fetchStaff(); }, [fetchStaff]);
 
@@ -62,6 +73,7 @@ export default function Staff() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
+          'X-Organization-ID': selectedOrganizationId,
         },
         body: JSON.stringify({ [zone]: nextLevel }),
       });
@@ -75,6 +87,34 @@ export default function Staff() {
       );
     } finally {
       setSaving(prev => ({ ...prev, [employeeId]: false }));
+    }
+  };
+
+  const handleRoleChange = async (employeeId, roleOverride) => {
+    const previous = rows.find(r => r.employee_id === employeeId)?.role_override || '';
+    setRows(current => current.map(row => (
+      row.employee_id === employeeId ? { ...row, role_override: roleOverride } : row
+    )));
+    setSaving(current => ({ ...current, [employeeId]: true }));
+    try {
+      const res = await fetch(`${API_BASE}/api/schedule/staff/${employeeId}/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'X-Organization-ID': selectedOrganizationId,
+        },
+        body: JSON.stringify({ role_override: roleOverride }),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const updated = await res.json();
+      setRows(current => current.map(row => row.employee_id === employeeId ? updated : row));
+    } catch {
+      setRows(current => current.map(row => (
+        row.employee_id === employeeId ? { ...row, role_override: previous } : row
+      )));
+    } finally {
+      setSaving(current => ({ ...current, [employeeId]: false }));
     }
   };
 
@@ -125,7 +165,7 @@ export default function Staff() {
             </thead>
             <tbody>
               {rows.map(row => (
-                <tr key={row.employee_id} className={saving[row.employee_id] ? 'saving' : ''}>
+                <tr key={row.employee_id} className={`${saving[row.employee_id] ? 'saving' : ''}${row.role_override === 'non_active' ? ' non-active' : ''}`}>
                   <td className="staff-name-cell">{displayName(row.name)}</td>
                   {ZONES.map(zone => {
                     const level = row[zone] ?? 0;
@@ -144,9 +184,19 @@ export default function Staff() {
                       </td>
                     );
                   })}
-                  <td className="staff-name-cell" style={{ fontWeight: 500, color: '#6f6f78' }}>
+                  <td className="staff-role-cell">
                     <Users style={{ width: 14, height: 14, marginRight: 6, verticalAlign: 'text-bottom' }} />
-                    {row.primary_job || 'Associate'}
+                    <select
+                      value={row.role_override || ''}
+                      onChange={event => handleRoleChange(row.employee_id, event.target.value)}
+                      className="role-select"
+                      disabled={!!saving[row.employee_id]}
+                    >
+                      <option value="">Auto ({scrapedRole(row.primary_job)})</option>
+                      {ROLE_OPTIONS.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
                   </td>
                 </tr>
               ))}

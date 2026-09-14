@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from './AuthContext';
-import { Palette, Settings } from 'lucide-react';
+import { Download, LoaderCircle, Palette, Settings } from 'lucide-react';
 import Workbook from './Workbook';
 import Staff from './Staff';
+import AdminPanel from './AdminPanel';
 import API_BASE from './config';
 import FloorlyLogo from './FloorlyLogo';
+import { EXTENSION_STORE_URL, getCurrentEmployeeMapping, importFromKronos, setCurrentEmployeeMapping } from './kronosExtension';
 import { applyTheme, isValidHex, normalizeTheme, THEME_HEX_FIELDS, THEME_PRESETS } from './theme';
 import './App.css';
 
@@ -96,6 +98,29 @@ function ThemeSettingsModal({
   );
 }
 
+function EmployeeIdentityModal({ mapping, selectedEmployeeId, saving, onSelect, onCreate, onSave, onClose }) {
+  if (!mapping) return null;
+  return (
+    <div className="settings-modal-backdrop" onClick={onClose}>
+      <div className="settings-modal employee-identity-modal" onClick={event => event.stopPropagation()}>
+        <div className="settings-modal-header"><h3>Choose your employee identity</h3><button className="settings-close-btn" onClick={onClose}>Close</button></div>
+        <p className="settings-help">Kronos labels your row “My Schedule.” Choose your employee once so imports from every account stay accurate. Only an administrator can change this later.</p>
+        {mapping.candidates.length > 0 && <label className="employee-identity-field">
+          <span>Existing employee</span>
+          <select value={selectedEmployeeId} onChange={event => onSelect(event.target.value)}>
+            <option value="">Select employee</option>
+            {mapping.candidates.map(employee => <option key={employee.id} value={employee.id}>{employee.name}{employee.primary_job ? ` — ${employee.primary_job}` : ''}</option>)}
+          </select>
+        </label>}
+        <div className="employee-identity-actions">
+          {mapping.candidates.length > 0 && <button disabled={saving || !selectedEmployeeId} onClick={onSave}>{saving ? 'Saving...' : 'Link selected employee'}</button>}
+          {mapping.can_create_from_profile && <button className="employee-create-btn" disabled={saving} onClick={onCreate}>{saving ? 'Saving...' : `Create as ${mapping.profile_full_name}`}</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Dashboard() {
   const [activeTab, setActiveTab] = useState('workbook');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -103,7 +128,16 @@ function Dashboard() {
   const [customTheme, setCustomTheme] = useState({ ...THEME_PRESETS.classic.colors });
   const [savingTheme, setSavingTheme] = useState(false);
   const [themeMessage, setThemeMessage] = useState('');
-  const { user, logout } = useAuth();
+  const [kronosBusy, setKronosBusy] = useState(false);
+  const [kronosState, setKronosState] = useState('idle');
+  const [kronosMessage, setKronosMessage] = useState('');
+  const [showExtensionLink, setShowExtensionLink] = useState(false);
+  const [employeeMapping, setEmployeeMapping] = useState(null);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
+  const [savingEmployeeMapping, setSavingEmployeeMapping] = useState(false);
+  const [workbookVersion, setWorkbookVersion] = useState(0);
+  const [selectedWeekStart, setSelectedWeekStart] = useState('');
+  const { user, logout, selectedOrganizationId, selectOrganization, refreshUser } = useAuth();
 
   useEffect(() => {
     const pref = normalizeTheme(user?.theme_preference);
@@ -119,6 +153,82 @@ function Dashboard() {
     });
     applyTheme(pref);
   }, [user]);
+
+  const runKronosImport = async () => {
+    setKronosBusy(true);
+    try {
+      await importFromKronos({
+        organizationId: selectedOrganizationId,
+        weekStart: selectedWeekStart,
+        accessToken: localStorage.getItem('access_token'),
+        onState: setKronosState,
+      });
+      setWorkbookVersion(value => value + 1);
+      setKronosState('complete');
+      setKronosMessage(`Kronos schedule imported for week ${selectedWeekStart}.`);
+    } catch (error) {
+      setKronosState(error.code === 'KRONOS_TAB_OPENED' ? 'opening' : 'failed');
+      setShowExtensionLink(['EXTENSION_MISSING', 'EXTENSION_NOT_CONFIGURED'].includes(error.code));
+      setKronosMessage(error.message || 'Kronos import failed.');
+    } finally {
+      setKronosBusy(false);
+    }
+  };
+
+  const handleKronosImport = async () => {
+    setKronosBusy(true);
+    setKronosState('checking');
+    setKronosMessage('');
+    setShowExtensionLink(false);
+    try {
+      const mapping = await getCurrentEmployeeMapping({
+        organizationId: selectedOrganizationId,
+        accessToken: localStorage.getItem('access_token'),
+      });
+      if (mapping.linked_employee) {
+        await runKronosImport();
+        return;
+      }
+      setEmployeeMapping(mapping);
+      setSelectedEmployeeId('');
+      setKronosState('idle');
+    } catch (error) {
+      setKronosState('failed');
+      setKronosMessage(error.message || 'Could not verify employee identity.');
+    } finally {
+      setKronosBusy(false);
+    }
+  };
+
+  const saveEmployeeMapping = async createFromProfile => {
+    setSavingEmployeeMapping(true);
+    setKronosMessage('');
+    try {
+      await setCurrentEmployeeMapping({
+        organizationId: selectedOrganizationId,
+        accessToken: localStorage.getItem('access_token'),
+        employeeId: selectedEmployeeId,
+        createFromProfile,
+      });
+      setEmployeeMapping(null);
+      await runKronosImport();
+    } catch (error) {
+      setKronosState('failed');
+      setKronosMessage(error.message || 'Could not save employee identity.');
+    } finally {
+      setSavingEmployeeMapping(false);
+    }
+  };
+
+  const switchOrganization = (id) => {
+    selectOrganization(id);
+    setSelectedWeekStart('');
+    setWorkbookVersion(value => value + 1);
+    setKronosState('idle');
+    setKronosMessage('');
+    setShowExtensionLink(false);
+    setEmployeeMapping(null);
+  };
 
   const applyPreset = (presetKey) => {
     const preset = THEME_PRESETS[presetKey];
@@ -185,11 +295,21 @@ function Dashboard() {
             <p className="header-subtitle">Daily retail floor execution dashboard</p>
           </div>
           <div className="user-info">
+            <select className="organization-switcher" value={selectedOrganizationId} onChange={event => switchOrganization(event.target.value)}>
+              {(user?.organizations || []).map(org => <option key={org.id} value={org.id}>{org.name}</option>)}
+            </select>
+            <div className="kronos-controls">
+              <button className="kronos-import-btn" onClick={handleKronosImport} disabled={activeTab !== 'workbook' || !selectedOrganizationId || !selectedWeekStart || kronosBusy}>
+                {kronosBusy ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
+                {kronosBusy ? (kronosState === 'checking' ? 'Checking extension...' : 'Scraping & uploading...') : 'Import from Kronos'}
+              </button>
+              {kronosState !== 'idle' && <span className={`kronos-status kronos-status-${kronosState}`}>{kronosState}</span>}
+            </div>
             <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
               <Settings size={14} />
               Settings
             </button>
-            <span className="user-greeting">{user?.username}</span>
+            <span className="user-greeting">{user?.full_name || user?.username}</span>
             <button className="logout-btn" onClick={logout}>Logout</button>
           </div>
         </div>
@@ -199,6 +319,7 @@ function Dashboard() {
             {themeMessage}
           </div>
         )}
+        {kronosMessage && <div className="kronos-message">{kronosMessage}{showExtensionLink && EXTENSION_STORE_URL && <> <a href={EXTENSION_STORE_URL} target="_blank" rel="noreferrer">Install extension</a>.</>}</div>}
 
         <nav className="nav-tabs">
           <button
@@ -213,12 +334,15 @@ function Dashboard() {
           >
             Staff
           </button>
+          {user?.is_admin && <button className={`nav-tab${activeTab === 'admin' ? ' active' : ''}`} onClick={() => setActiveTab('admin')}>Admin</button>}
         </nav>
       </header>
 
       <main className="tab-content">
-        {activeTab === 'workbook' && <Workbook />}
-        {activeTab === 'staff'    && <Staff />}
+        {!selectedOrganizationId && activeTab !== 'admin' && <div className="state-card inline"><div><p className="state-title">No organization access</p><p className="state-copy">Ask an administrator to add you to an active organization.</p></div></div>}
+        {selectedOrganizationId && activeTab === 'workbook' && <Workbook key={selectedOrganizationId} refreshVersion={workbookVersion} onWeekChange={setSelectedWeekStart} />}
+        {selectedOrganizationId && activeTab === 'staff' && <Staff key={selectedOrganizationId} />}
+        {activeTab === 'admin' && user?.is_admin && <AdminPanel onOrganizationsChanged={refreshUser} />}
       </main>
 
       <ThemeSettingsModal
@@ -230,6 +354,15 @@ function Dashboard() {
         onSelectPreset={applyPreset}
         onCustomChange={handleCustomChange}
         onSave={saveTheme}
+      />
+      <EmployeeIdentityModal
+        mapping={employeeMapping}
+        selectedEmployeeId={selectedEmployeeId}
+        saving={savingEmployeeMapping}
+        onSelect={setSelectedEmployeeId}
+        onSave={() => saveEmployeeMapping(false)}
+        onCreate={() => saveEmployeeMapping(true)}
+        onClose={() => setEmployeeMapping(null)}
       />
     </div>
   );

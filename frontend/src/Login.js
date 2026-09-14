@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useAuth } from './AuthContext';
-import { Link } from 'react-router-dom';
 import { AlertCircle, ShieldCheck } from 'lucide-react';
 import FloorlyLogo from './FloorlyLogo';
 import './Auth.css';
@@ -69,12 +68,7 @@ function Login() {
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
-        <p className="toggle-text">
-          Don't have an account?{' '}
-          <Link className="toggle-link" to="/register">
-            Register here
-          </Link>
-        </p>
+        <p className="toggle-text">Need access? Contact your Floorly administrator.</p>
       </div>
     </div>
   );

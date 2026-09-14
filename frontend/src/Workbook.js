@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { AlertTriangle, Inbox, LoaderCircle, Printer, Settings2, Upload } from 'lucide-react';
+import { AlertTriangle, Inbox, LoaderCircle, Printer, Settings2 } from 'lucide-react';
 import API_BASE from './config';
+import { useAuth } from './AuthContext';
 import './Workbook.css';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -459,16 +460,14 @@ function HourlySegments({ goals, hourly, setHourly, segments, kpiRows, printFitM
 }
 
 // ─── Main Workbook component ──────────────────────────────────────────────────
-export default function Workbook() {
+export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
+  const { selectedOrganizationId } = useAuth();
   const [weekStart, setWeekStart] = useState(() => getMondayOfWeek(new Date()));
   const [activeDay, setActiveDay] = useState('Mon');
   const [data, setData]           = useState(null);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState(null);
   const [overrides, setOverrides] = useState({});
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState(null);
-  const fileInputRef = useRef(null);
 
   // KPI row configuration — shared across all days
   const [kpiRows, setKpiRows] = useState(DEFAULT_KPI_ROWS);
@@ -494,6 +493,10 @@ export default function Workbook() {
 
   const token = localStorage.getItem('access_token');
 
+  useEffect(() => {
+    onWeekChange?.(toYMD(weekStart));
+  }, [weekStart, onWeekChange]);
+
   const fetchWorkbook = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -501,7 +504,7 @@ export default function Workbook() {
     try {
       const res = await fetch(
         `${API_BASE}/api/schedule/workbook/?week_start=${toYMD(weekStart)}&day=${activeDay}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}`, 'X-Organization-ID': selectedOrganizationId } }
       );
       if (!res.ok) throw new Error('Failed to fetch workbook');
       setData(await res.json());
@@ -510,47 +513,15 @@ export default function Workbook() {
     } finally {
       setLoading(false);
     }
-  }, [weekStart, activeDay, token]);
+  }, [weekStart, activeDay, token, selectedOrganizationId]);
 
-  useEffect(() => { fetchWorkbook(); }, [fetchWorkbook]);
+  useEffect(() => { fetchWorkbook(); }, [fetchWorkbook, refreshVersion]);
 
   const weekDates = DAYS.map((_, i) => addDays(weekStart, i));
   const hasOverrides = Object.keys(overrides).length > 0;
   const optionalKpiCount = kpiRows.filter(r => r.optional || String(r.id).startsWith('custom_')).length;
 
   const handlePrint = () => window.print();
-
-  const handleImport = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setImporting(true);
-    setImportResult(null);
-    setError(null);
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      const res = await fetch(`${API_BASE}/api/schedule/import/`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Import failed');
-      setImportResult(result);
-      if ((result.shifts_created ?? 0) > 0 || (result.shifts_updated ?? 0) > 0) {
-        if (result.week_start) {
-          setWeekStart(new Date(result.week_start + 'T00:00:00'));
-        } else {
-          fetchWorkbook();
-        }
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setImporting(false);
-      e.target.value = '';
-    }
-  };
 
   return (
     <div className={`wb-root wb-print-${printFitMode}`}>
@@ -570,22 +541,6 @@ export default function Workbook() {
               Reset overrides
             </button>
           )}
-          <button
-            className="wb-import-btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
-            title="Import XLSX schedule"
-          >
-            <Upload style={{ width: 14, height: 14, marginRight: 6, verticalAlign: 'text-bottom' }} />
-            {importing ? 'Importing…' : 'Import XLSX'}
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx"
-            style={{ display: 'none' }}
-            onChange={handleImport}
-          />
           <button
             className={`wb-customize-btn${editingKpis ? ' active' : ''}`}
             onClick={() => setEditingKpis(e => !e)}
@@ -613,12 +568,6 @@ export default function Workbook() {
       {printFitMode === 'hide-optional' && optionalKpiCount > 0 && (
         <div className="wb-print-fit-note">Print mode will hide {optionalKpiCount} optional KPI row{optionalKpiCount > 1 ? 's' : ''} to keep one-page output.</div>
       )}
-      {importResult && (
-        <div className="wb-import-result">
-          ✅ Imported: {importResult.shifts_created ?? 0} created, {importResult.shifts_updated ?? 0} updated
-        </div>
-      )}
-
       {/* ── KPI editor panel ── */}
       {editingKpis && (
         <div className="wb-kpi-editor">

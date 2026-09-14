@@ -92,6 +92,10 @@
   opacity: 0.6;
 }
 
+.staff-table tbody tr.non-active {
+  opacity: 0.58;
+}
+
 .staff-name-cell {
   padding: 10px 12px 10px 16px;
   font-weight: 600;
@@ -159,5 +163,28 @@
 }
 .zone-select:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.staff-role-cell {
+  min-width: 170px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
+.role-select {
+  width: calc(100% - 24px);
+  min-width: 128px;
+  padding: 6px 8px;
+  border: 1px solid rgba(13, 13, 18, 0.18);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.role-select:disabled {
   cursor: not-allowed;
 }

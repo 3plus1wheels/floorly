@@ -33,12 +33,6 @@ DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
-# Automatically trust the Render-assigned hostname
-_render_host = os.getenv('RENDER_EXTERNAL_HOSTNAME')
-if _render_host:
-    ALLOWED_HOSTS.append(_render_host)
-
-
 # Application definition
 
 INSTALLED_APPS = [
@@ -153,10 +147,13 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-# Serve React build's JS/CSS via collectstatic, and root files (favicon etc.) via whitenoise
-_react_static = BASE_DIR / 'frontend' / 'build' / 'static'
+# Local non-Docker builds may still place React assets beside Django. In Docker,
+# Nginx serves the frontend and Django only serves its own collected static files.
+_react_build = BASE_DIR / 'frontend' / 'build'
+_react_static = _react_build / 'static'
 STATICFILES_DIRS = [_react_static] if _react_static.exists() else []
-WHITENOISE_ROOT = BASE_DIR / 'frontend' / 'build'
+if _react_build.exists():
+    WHITENOISE_ROOT = _react_build
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/6.0/ref/settings/#default-auto-field
@@ -170,6 +167,9 @@ CORS_ALLOWED_ORIGINS = os.getenv(
 ).split(',')
 
 CORS_ALLOW_CREDENTIALS = True
+
+from corsheaders.defaults import default_headers
+CORS_ALLOW_HEADERS = (*default_headers, 'x-organization-id')
 
 # REST Framework settings
 REST_FRAMEWORK = {

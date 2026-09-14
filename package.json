@@ -1,0 +1,13 @@
+{
+  "name": "floorly-kronos-extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test extension/test/*.test.js",
+    "extension:build": "node --env-file-if-exists=.env extension/build.mjs"
+  }
+}

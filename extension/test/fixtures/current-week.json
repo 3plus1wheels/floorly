@@ -1,0 +1,4 @@
+[
+  { "employee": "Jane Doe", "date": "2026-09-08", "startTime": "09:00", "endTime": "17:00", "job": "Stylist" },
+  { "employee": "Alex Smith", "date": "2026-09-12", "startTime": "10:30", "endTime": "18:30", "job": "Manager" }
+]

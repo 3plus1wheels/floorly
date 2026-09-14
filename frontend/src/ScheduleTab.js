@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import API_BASE from './config';
+import { useAuth } from './AuthContext';
 import './Schedule.css';
 
 const HOUR_START = 6;   // 6 AM
@@ -63,20 +64,14 @@ function formatShortDate(date) {
 }
 
 function ScheduleTab() {
+  const { selectedOrganizationId } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState(null);
-  const [importTraceback, setImportTraceback] = useState(null);
-  const [inspecting, setInspecting] = useState(false);
-  const [inspectResult, setInspectResult] = useState(null);
   const [weekStart, setWeekStart] = useState(() => getMondayOfWeek(new Date()));
   const [tooltip, setTooltip] = useState(null);
   const [viewMode, setViewMode] = useState('gantt'); // 'gantt' | 'day'
   const [selectedDay, setSelectedDay] = useState('Mon');
-  const fileInputRef = useRef(null);
-  const inspectFileInputRef = useRef(null);
 
   const token = localStorage.getItem('access_token');
 
@@ -86,7 +81,7 @@ function ScheduleTab() {
     try {
       const res = await fetch(
         `${API_BASE}/api/schedule/shifts/?week_start=${toYMD(weekStart)}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}`, 'X-Organization-ID': selectedOrganizationId } }
       );
       if (!res.ok) throw new Error('Failed to fetch shifts');
       const data = await res.json();
@@ -96,7 +91,7 @@ function ScheduleTab() {
     } finally {
       setLoading(false);
     }
-  }, [weekStart, token]);
+  }, [weekStart, token, selectedOrganizationId]);
 
   useEffect(() => {
     fetchShifts();
@@ -131,74 +126,6 @@ function ScheduleTab() {
   const handleNextWeek = () => setWeekStart(w => addDays(w, 7));
   const handleToday = () => setWeekStart(getMondayOfWeek(new Date()));
 
-  const handleImport = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setImporting(true);
-    setImportResult(null);
-    setImportTraceback(null);
-    setInspectResult(null);
-    setError(null);
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const res = await fetch(`${API_BASE}/api/schedule/import/`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.traceback) setImportTraceback(data.traceback);
-        throw new Error(data.error || 'Import failed');
-      }
-      setImportResult(data);
-      if ((data.shifts_created ?? 0) > 0 || (data.shifts_updated ?? 0) > 0) {
-        if (data.week_start) {
-          // Navigate to the imported week — useEffect will re-fetch automatically
-          setWeekStart(new Date(data.week_start + 'T00:00:00'));
-        } else {
-          fetchShifts();
-        }
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setImporting(false);
-      e.target.value = '';
-    }
-  };
-
-  const handleInspect = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setInspecting(true);
-    setInspectResult(null);
-    setImportResult(null);
-    setError(null);
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const res = await fetch(`${API_BASE}/api/schedule/inspect/`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Inspect failed');
-      setInspectResult(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setInspecting(false);
-      e.target.value = '';
-    }
-  };
-
   const hours = Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => HOUR_START + i);
 
   // ─── Gantt (weekly) view ───────────────────────────────────────────
@@ -216,7 +143,7 @@ function ScheduleTab() {
 
       <div className="gantt-body">
         {employees.length === 0 ? (
-          <div className="no-data">No shifts for this week. Import an XLSX to get started.</div>
+          <div className="no-data">No shifts available for this week.</div>
         ) : (
           employees.map(emp => {
             const empShifts = shifts.filter(s => s.employee_name === emp);
@@ -372,35 +299,6 @@ function ScheduleTab() {
             >📅 Day</button>
           </div>
 
-          <button
-            className="import-btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
-          >
-            {importing ? '⏳ Importing...' : '📥 Import XLSX'}
-          </button>
-          <button
-            className="inspect-btn"
-            onClick={() => inspectFileInputRef.current?.click()}
-            disabled={inspecting}
-            title="Inspect XLSX structure without saving — use this to debug format issues"
-          >
-            {inspecting ? '🔍 Inspecting...' : '🔍 Inspect'}
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx"
-            style={{ display: 'none' }}
-            onChange={handleImport}
-          />
-          <input
-            ref={inspectFileInputRef}
-            type="file"
-            accept=".xlsx"
-            style={{ display: 'none' }}
-            onChange={handleInspect}
-          />
         </div>
       </div>
 
@@ -408,101 +306,8 @@ function ScheduleTab() {
       {error && (
         <div className="schedule-error">
           <span>⚠️ {error}</span>
-          {importTraceback && (
-            <pre className="schedule-traceback">{importTraceback}</pre>
-          )}
         </div>
       )}
-      {importResult && (() => {
-        const created = importResult.shifts_created ?? 0;
-        const updated = importResult.shifts_updated ?? 0;
-        const empNew = importResult.employees_created ?? 0;
-        const parsed = importResult.parsed_count ?? 0;
-        const hasData = created > 0 || updated > 0;
-        return (
-          <div className={hasData ? 'schedule-success' : 'schedule-warning'}>
-            {hasData
-              ? `✅ Import done — ${created} shifts created, ${updated} updated, ${empNew} new employees.`
-              : `⚠️ File parsed (${parsed} records found) but no shifts were stored. The XLSX column layout may not match the expected format. Try the 🔍 Inspect button to view the raw sheet structure.`
-            }
-          </div>
-        );
-      })()}
-      {inspectResult && (
-        <div className="inspect-panel">
-          <div className="inspect-header">
-            <strong>🔍 Inspect Results</strong>
-            <span>— {inspectResult.parsed_count} shifts parsed from {inspectResult.sheets?.length} sheet(s)</span>
-            <button className="inspect-close" onClick={() => setInspectResult(null)}>✕</button>
-          </div>
-
-          {/* Raw sheet preview */}
-          {inspectResult.sheets?.map((sheet, si) => (
-            <div key={si} className="inspect-sheet">
-              <div className="inspect-sheet-title">{sheet.name} ({sheet.max_row} rows × {sheet.max_col} cols)</div>
-              <div className="inspect-table-wrap">
-                <table className="inspect-table">
-                  <thead><tr><th>#</th>{sheet.preview[0]?.map((_, ci) => <th key={ci}>{ci}</th>)}</tr></thead>
-                  <tbody>
-                    {sheet.preview.map((row, ri) => (
-                      <tr key={ri}>
-                        <td className="inspect-rownum">{ri + 1}</td>
-                        {row.map((cell, ci) => <td key={ci}>{cell ?? ''}</td>)}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ))}
-
-          {/* Parser trace */}
-          {inspectResult.trace && (
-            <div className="inspect-trace">
-              <div className="inspect-sheet-title">Parser trace (first 40 rows)</div>
-              {inspectResult.trace.map((entry, i) => {
-                if (entry.type === 'empty') return null;
-                if (entry.type === 'employee') return (
-                  <div key={i} className="trace-employee">
-                    <div className="trace-emp-name">Row {entry.row}: 👤 {entry.name} — {entry.job}</div>
-                    <div className="trace-time-cells">
-                      {Object.entries(entry.time_cells).map(([day, info]) => (
-                        <span key={day} className={`trace-cell ${info.matched ? 'match' : 'nomatch'}`}>
-                          {day}: {info.matched ? `✅ ${info.groups?.[0]}–${info.groups?.[1]}` : `❌ ${info.raw}`}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                );
-                if (entry.type === 'col_header') return (
-                  <div key={i} className="trace-header">
-                    Row {entry.row}: 📅 Date header — dates found: {Object.keys(entry.day_dates).join(', ') || 'NONE'}
-                    {entry.date_row_raw && (
-                      <div className="trace-date-raw">Raw date row: {entry.date_row_raw.filter(v => v !== 'None').join(' | ')}</div>
-                    )}
-                  </div>
-                );
-                if (entry.type === 'section_header') return (
-                  <div key={i} className="trace-section">Row {entry.row}: ⏭ Section: {entry.val}</div>
-                );
-                return <div key={i} className="trace-other">Row {entry.row}: {entry.type} {entry.col0 || ''}</div>;
-              })}
-            </div>
-          )}
-
-          {inspectResult.sample_records?.length > 0 && (
-            <div className="inspect-parsed">
-              <strong>Sample parsed records ({inspectResult.parsed_count} total):</strong>
-              <pre>{JSON.stringify(inspectResult.sample_records, null, 2)}</pre>
-            </div>
-          )}
-
-          {inspectResult.error && (
-            <div className="schedule-error">Error: {inspectResult.error}<br/><pre style={{fontSize:11}}>{inspectResult.traceback}</pre></div>
-          )}
-        </div>
-      )}
-
       {/* Legend */}
       {roles.length > 0 && (
         <div className="schedule-legend">

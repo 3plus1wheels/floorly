@@ -1,8 +1,14 @@
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-test('renders learn react link', () => {
+jest.mock('./AuthContext', () => ({
+  AuthProvider: ({ children }) => children,
+  useAuth: () => ({ user: null, loading: false }),
+}));
+
+jest.mock('./LandingPage', () => () => <main>Zonechart landing page</main>);
+
+test('renders the public landing route', () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+  expect(screen.getByText('Zonechart landing page')).toBeInTheDocument();
 });

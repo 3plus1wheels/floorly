@@ -72,6 +72,16 @@
   font-weight: 600;
 }
 
+.organization-switcher {
+  max-width: 210px;
+  border: 1px solid var(--color-accent);
+  border-radius: 8px;
+  background: var(--color-card);
+  color: var(--color-text);
+  padding: 8px 10px;
+  font: inherit;
+}
+
 .logout-btn {
   padding: 7px 14px;
   font-size: 13px;
@@ -101,6 +111,64 @@
 .settings-btn:hover {
   background: #f8f4ec;
 }
+
+.kronos-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.kronos-import-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
+  border-radius: 999px !important;
+  border: 1px solid var(--color-border) !important;
+  background: #fff;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.kronos-import-btn {
+  color: #245a39;
+  border-color: rgba(47, 122, 78, 0.34) !important;
+}
+
+.kronos-import-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.kronos-status {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--color-muted);
+  font-size: 9px;
+  text-transform: capitalize;
+}
+
+.kronos-status-complete { color: #245a39; }
+.kronos-status-opening { color: #795f16; }
+.kronos-status-failed { color: #8f2b21; }
+
+.kronos-message {
+  width: 100%;
+  max-width: 1440px;
+  margin-bottom: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--color-text);
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.kronos-message a { color: var(--color-primary); font-weight: 700; }
+
+.spin { animation: kronos-spin 0.8s linear infinite; }
+@keyframes kronos-spin { to { transform: rotate(360deg); } }
 
 .theme-message {
   width: 100%;
@@ -283,6 +351,12 @@
   padding: 8px 14px !important;
   font-size: 12px !important;
 }
+
+.employee-identity-modal { max-width: 560px; }
+.employee-identity-field { display: grid; gap: 6px; margin: 16px 0; color: var(--color-text); font-size: 13px; }
+.employee-identity-field select { padding: 10px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-background); color: var(--color-text); }
+.employee-identity-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.employee-create-btn { background: transparent !important; border-color: var(--color-border) !important; }
 
 .loading-container {
   min-height: 100vh;

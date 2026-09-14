@@ -16,7 +16,7 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include, re_path
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from pathlib import Path
 
 _INDEX = Path(__file__).resolve().parent.parent / 'frontend' / 'build' / 'index.html'
@@ -27,10 +27,15 @@ def _react_index(request):
     except FileNotFoundError:
         return HttpResponse('<p>Frontend not built. Run: cd frontend &amp;&amp; npm run build</p>', status=503)
 
+
+def _health(request):
+    return JsonResponse({'status': 'ok'})
+
 urlpatterns = [
+    path('health/', _health, name='health'),
     path('admin/', admin.site.urls),
     path('api/', include('api.urls')),
     path('api/auth/', include('api.auth_urls')),
     path('api/schedule/', include('schedule.urls')),
-    re_path(r'^(?!static/).*$', _react_index),
+    re_path(r'^(?!static/|api/|admin/|health/).*$', _react_index),
 ]
