@@ -1,23 +1,39 @@
 import { detectVisibleWeekStart, parseGridSnapshots, validateWeek } from './extractor.js';
 
+export const LIMITS = Object.freeze({ maxTicketLength: 512, maxSnapshots: 200, maxRows: 5000, maxCells: 50000, maxTitles: 100000, maxPayloadBytes: 5 * 1024 * 1024, maxShifts: 5000 });
+const validDate = value => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T12:00:00Z`).getTime());
+const withinLimits = capture => {
+  if (!capture || !Array.isArray(capture.snapshots) || capture.snapshots.length > LIMITS.maxSnapshots) return false;
+  let rows = 0; let cells = 0; let titles = 0;
+  for (const snapshot of capture.snapshots) {
+    rows += Array.isArray(snapshot?.rows) ? snapshot.rows.length : 0;
+    for (const row of snapshot?.rows || []) for (const cell of row?.cells || []) { cells += 1; titles += Array.isArray(cell?.titles) ? cell.titles.length : 0; }
+  }
+  return rows <= LIMITS.maxRows && cells <= LIMITS.maxCells && titles <= LIMITS.maxTitles && JSON.stringify(capture).length <= LIMITS.maxPayloadBytes;
+};
+
 export function createImporter({ chromeApi, fetchImpl, config, now = () => new Date() }) {
   return async function importSchedule(message, sender) {
     const senderOrigin = (() => { try { return new URL(sender?.url || '').origin; } catch { return ''; } })();
     if (!config.webOrigins.includes(senderOrigin)) return { ok: false, code: 'ORIGIN_DENIED', error: 'Website is not allowed to use this extension.' };
     const organizationId = Number(message?.organization_id);
     const expectedMonday = String(message?.week_start || '');
-    const validMonday = /^\d{4}-\d{2}-\d{2}$/.test(expectedMonday) && new Date(`${expectedMonday}T12:00:00Z`).getUTCDay() === 1;
-    if (message?.type !== 'IMPORT_KRONOS_SCHEDULE' || !Number.isInteger(organizationId) || organizationId <= 0 || typeof message.ticket !== 'string' || !message.ticket.trim() || !validMonday) return { ok: false, code: 'INVALID_REQUEST', error: 'Invalid import request.' };
+    const validMonday = validDate(expectedMonday) && new Date(`${expectedMonday}T12:00:00Z`).getUTCDay() === 1;
+    if (message?.type !== 'IMPORT_KRONOS_SCHEDULE' || !Number.isSafeInteger(organizationId) || organizationId <= 0 || typeof message.ticket !== 'string' || !message.ticket.trim() || message.ticket.length > LIMITS.maxTicketLength || !validMonday) return { ok: false, code: 'INVALID_REQUEST', error: 'Invalid import request.' };
     let syncUrl;
     try { syncUrl = new URL(message.sync_url); } catch { return { ok: false, code: 'INVALID_SYNC_URL', error: 'Invalid backend sync URL.' }; }
-    if (syncUrl.username || syncUrl.password || !config.apiOrigins.includes(syncUrl.origin) || syncUrl.pathname !== '/api/schedule/kronos-sync/') return { ok: false, code: 'INVALID_SYNC_URL', error: 'Backend sync URL is not allowed.' };
+    if (syncUrl.username || syncUrl.password || syncUrl.search || syncUrl.hash || syncUrl.protocol !== 'https:' || !config.apiOrigins.includes(syncUrl.origin) || syncUrl.pathname !== '/api/schedule/kronos-sync/') return { ok: false, code: 'INVALID_SYNC_URL', error: 'Backend sync URL is not allowed.' };
 
-    const tabs = await chromeApi.tabs.query({ url: `${new URL(config.kronosScheduleUrl).origin}/*` });
+    const kronosUrl = new URL(config.kronosScheduleUrl);
+    const kronosOrigins = config.kronosOrigins?.length ? config.kronosOrigins : [kronosUrl.origin];
+    const tabs = await chromeApi.tabs.query({ url: kronosOrigins.map(origin => `${origin}/*`) });
     if (!tabs.length) {
       await chromeApi.tabs.create({ url: config.kronosScheduleUrl, active: true });
       return { ok: false, code: 'KRONOS_TAB_OPENED', error: 'Kronos opened. Log in, open My Location Schedule, then import again.' };
     }
     const tab = tabs.find(item => item.active) || tabs[0];
+    let tabUrl; try { tabUrl = new URL(tab.url || ''); } catch { tabUrl = null; }
+    if (!tabUrl || !kronosOrigins.includes(tabUrl.origin) || !tabUrl.pathname.startsWith(kronosUrl.pathname)) return { ok: false, code: 'KRONOS_URL_DENIED', error: 'Open authorized Kronos schedule before importing.' };
     let capture;
     try { capture = await chromeApi.tabs.sendMessage(tab.id, { type: 'CAPTURE_KRONOS_GRID' }); }
     catch {
@@ -28,6 +44,7 @@ export function createImporter({ chromeApi, fetchImpl, config, now = () => new D
       await chromeApi.tabs.update(tab.id, { active: true });
       return capture || { ok: false, code: 'EXTRACTION_FAILED', error: 'Kronos extraction failed.' };
     }
+    if (!withinLimits(capture)) return { ok: false, code: 'PAYLOAD_TOO_LARGE', error: 'Schedule is too large to import safely.' };
     let week;
     try {
       const visibleMonday = detectVisibleWeekStart(capture.snapshots, expectedMonday);
@@ -35,6 +52,7 @@ export function createImporter({ chromeApi, fetchImpl, config, now = () => new D
         return { ok: false, code: 'WEEK_MISMATCH', error: `Kronos shows week ${visibleMonday}; Floorly shows week ${expectedMonday}. Open same week in both, then retry.` };
       }
       week = validateWeek(parseGridSnapshots(capture.snapshots, expectedMonday), expectedMonday);
+      if (week.shifts.length > LIMITS.maxShifts) return { ok: false, code: 'PAYLOAD_TOO_LARGE', error: 'Schedule contains too many shifts.' };
     } catch (error) { return { ok: false, code: 'EXTRACTION_FAILED', error: error.message }; }
     const response = await fetchImpl(syncUrl.href, {
       method: 'POST',

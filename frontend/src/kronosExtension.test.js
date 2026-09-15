@@ -36,6 +36,7 @@ test('gets scoped ticket then asks extension to import', async () => {
       'X-Organization-ID': '17',
     }),
   }));
+  expect(fetchImpl.mock.calls[0][1].body).toBe(JSON.stringify({ consent: false, privacy_policy_version: '' }));
   expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith('extension-id', expect.objectContaining({
     type: 'IMPORT_KRONOS_SCHEDULE',
     organization_id: 17,

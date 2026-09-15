@@ -1,15 +1,20 @@
 import React from 'react';
 import { AuthProvider, useAuth } from './AuthContext';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { LoaderCircle } from 'lucide-react';
 import LandingPage from './LandingPage';
 import Login from './Login';
 import Dashboard from './Dashboard';
 import ChangePassword from './ChangePassword';
+import { PrivacyPolicy, SupportPage } from './LegalPages';
 import './App.css';
 
 function AppContent() {
   const { user, loading } = useAuth();
+  const location = useLocation();
+
+  if (location.pathname === '/privacy') return <PrivacyPolicy />;
+  if (location.pathname === '/support') return <SupportPage />;
 
   if (loading) {
     return (

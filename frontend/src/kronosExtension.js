@@ -72,7 +72,7 @@ export async function setCurrentEmployeeMapping({ organizationId, accessToken, e
   return result;
 }
 
-export async function importFromKronos({ organizationId, weekStart, accessToken, extensionId = EXTENSION_ID, fetchImpl = fetch, chromeApi = window.chrome, onState = () => {} }) {
+export async function importFromKronos({ organizationId, weekStart, accessToken, consent = false, privacyPolicyVersion = '', extensionId = EXTENSION_ID, fetchImpl = fetch, chromeApi = window.chrome, onState = () => {} }) {
   if (!organizationId) throw new Error('Select an organization before importing.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart || '')) throw new Error('Select a valid Floorly week before importing.');
   const apiBase = API_BASE.replace(/\/$/, '');
@@ -82,7 +82,9 @@ export async function importFromKronos({ organizationId, weekStart, accessToken,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'X-Organization-ID': String(organizationId),
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify({ consent, privacy_policy_version: privacyPolicyVersion }),
   });
   const ticketResult = await parseResponse(ticketResponse);
   if (!ticketResponse.ok) {

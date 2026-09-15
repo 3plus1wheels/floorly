@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
 from api.models import Organization, OrganizationMembership, UserProfile
-from .models import Employee, Shift, StaffZone
+from .models import Employee, KronosImportConsent, Shift, StaffZone
 from .authentication import ScheduleSyncToken
 
 
@@ -92,6 +92,15 @@ class ScheduleSyncTests(TestCase):
             with self.subTest(payload=payload):
                 self.assertEqual(self.post(payload).status_code, 400)
         self.assertFalse(Shift.objects.exists())
+
+    def test_rejects_more_than_5000_shifts(self):
+        self.payload['weeks'] = [{
+            **self.payload['weeks'][0],
+            'shifts': [self.shift('Nguyen, Vova', '2026-09-07')] * 5001,
+        }]
+        response = self.post()
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('too many shifts', response.data['error'])
 
     def test_preserves_duplicate_employee_date_and_start_as_occurrences(self):
         repeated = self.shift('Thompson, Sierra', '2026-09-13')
@@ -404,6 +413,11 @@ class ScheduleSyncTicketSecurityTests(TestCase):
         self.user = get_user_model().objects.create_user(username='extension-user', password='password')
         self.organization = Organization.objects.create(name='Extension Store')
         self.membership = OrganizationMembership.objects.create(user=self.user, organization=self.organization)
+        self.consent = KronosImportConsent.objects.create(
+            user=self.user,
+            organization=self.organization,
+            policy_version='2026-09-15',
+        )
         self.sync_url = reverse('schedule_sync')
         self.ticket_url = reverse('schedule_sync_ticket')
         self.payload = {
@@ -450,7 +464,24 @@ class ScheduleSyncTicketSecurityTests(TestCase):
         self.assertEqual(token['token_type'], 'schedule_sync')
         self.assertEqual(token['user_id'], str(self.user.id))
         self.assertEqual(token['organization_id'], self.organization.id)
+        self.assertEqual(token['privacy_policy_version'], '2026-09-15')
         self.assertEqual(token['exp'] - token['iat'], 300)
+
+    def test_current_privacy_consent_is_required_and_can_be_recorded(self):
+        self.consent.delete()
+        denied = self.client.post(self.ticket_url, {}, format='json', **self.access_headers())
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.data['code'], 'CONSENT_REQUIRED')
+        accepted = self.client.post(self.ticket_url, {
+            'consent': True,
+            'privacy_policy_version': '2026-09-15',
+        }, format='json', **self.access_headers())
+        self.assertEqual(accepted.status_code, 200)
+        self.assertTrue(KronosImportConsent.objects.filter(
+            user=self.user,
+            organization=self.organization,
+            policy_version='2026-09-15',
+        ).exists())
 
     def test_ticket_sync_succeeds(self):
         response = self.client.post(

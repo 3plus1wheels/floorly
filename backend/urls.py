@@ -17,6 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include, re_path
 from django.http import HttpResponse, JsonResponse
+from django.db import connection
 from pathlib import Path
 
 _INDEX = Path(__file__).resolve().parent.parent / 'frontend' / 'build' / 'index.html'
@@ -31,11 +32,22 @@ def _react_index(request):
 def _health(request):
     return JsonResponse({'status': 'ok'})
 
+
+def _ready(request):
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT 1')
+            cursor.fetchone()
+    except Exception:
+        return JsonResponse({'status': 'not_ready'}, status=503)
+    return JsonResponse({'status': 'ready'})
+
 urlpatterns = [
     path('health/', _health, name='health'),
+    path('ready/', _ready, name='ready'),
     path('admin/', admin.site.urls),
     path('api/', include('api.urls')),
     path('api/auth/', include('api.auth_urls')),
     path('api/schedule/', include('schedule.urls')),
-    re_path(r'^(?!static/|api/|admin/|health/).*$', _react_index),
+    re_path(r'^(?!static/|api/|admin/|health/|ready/).*$', _react_index),
 ]

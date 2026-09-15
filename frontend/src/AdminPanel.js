@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Building2, Check, ChevronDown, KeyRound, LoaderCircle, Pencil, Plus, Search, ShieldCheck, Users, X } from 'lucide-react';
+import { AlertTriangle, Building2, Check, ChevronDown, FileSpreadsheet, KeyRound, LoaderCircle, Pencil, Plus, Search, ShieldCheck, Upload, Users, X } from 'lucide-react';
 import API_BASE from './config';
 import { useAuth } from './AuthContext';
 import './AdminPanel.css';
@@ -23,6 +23,23 @@ function ErrorMessage({ children }) {
   return <div className="admin-error" role="alert"><AlertTriangle size={17} />{children}</div>;
 }
 
+function latestImportFrom(data) {
+  if (Array.isArray(data)) return data[0] || null;
+  return data?.latest || data?.latest_import || data?.batch || data?.imports?.[0] || data?.results?.[0] || data || null;
+}
+
+function displayDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+function importWarnings(batch) {
+  const warnings = batch?.warnings;
+  if (!Array.isArray(warnings)) return [];
+  return warnings.map(warning => typeof warning === 'string' ? warning : warning?.message || warning?.detail || JSON.stringify(warning));
+}
+
 export default function AdminPanel({ onOrganizationsChanged }) {
   const { user: currentUser } = useAuth();
   const token = localStorage.getItem('access_token');
@@ -42,11 +59,19 @@ export default function AdminPanel({ onOrganizationsChanged }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [currentKpiFile, setCurrentKpiFile] = useState(null);
+  const [priorKpiFile, setPriorKpiFile] = useState(null);
+  const [kpiImport, setKpiImport] = useState(null);
+  const [kpiImportLoading, setKpiImportLoading] = useState(false);
+  const [kpiImportError, setKpiImportError] = useState('');
+  const [kpiUploading, setKpiUploading] = useState(false);
+  const [kpiFileInputKey, setKpiFileInputKey] = useState(0);
 
   const request = useCallback(async (path, options = {}) => {
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
     const response = await fetch(`${API_BASE}${path}`, {
       ...options,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(options.headers || {}) },
+      headers: { ...(!isFormData ? { 'Content-Type': 'application/json' } : {}), Authorization: `Bearer ${token}`, ...(options.headers || {}) },
     });
     const data = response.status === 204 ? null : await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -57,6 +82,18 @@ export default function AdminPanel({ onOrganizationsChanged }) {
   }, [token]);
 
   const selectedOrganization = organizations.find(org => orgId(org.id) === selectedId) || null;
+
+  useEffect(() => {
+    if (!selectedId) { setKpiImport(null); setKpiImportError(''); return undefined; }
+    let active = true;
+    setKpiImportLoading(true);
+    setKpiImportError('');
+    request(`/api/admin/organizations/${encodeURIComponent(selectedId)}/kpi-imports/`)
+      .then(data => { if (active) setKpiImport(latestImportFrom(data)); })
+      .catch(err => { if (active) setKpiImportError(err.message); })
+      .finally(() => { if (active) setKpiImportLoading(false); });
+    return () => { active = false; };
+  }, [request, selectedId]);
 
   const loadOrganizations = useCallback(async (preferredId = '') => {
     const rows = await request('/api/admin/organizations/');
@@ -94,6 +131,7 @@ export default function AdminPanel({ onOrganizationsChanged }) {
   const selectOrganization = async event => {
     const id = event.target.value;
     setSelectedId(id);
+    setCurrentKpiFile(null); setPriorKpiFile(null); setKpiFileInputKey(value => value + 1);
     localStorage.setItem('admin_organization_id', id);
     setSearch(''); setNotice(''); setError('');
     const org = organizations.find(item => orgId(item.id) === id);
@@ -102,6 +140,24 @@ export default function AdminPanel({ onOrganizationsChanged }) {
   };
 
   const refreshSelected = async () => { await load(selectedId); };
+
+  const uploadKpiWorkbooks = async event => {
+    event.preventDefault();
+    if (!selectedOrganization || !currentKpiFile || !priorKpiFile) return;
+    setKpiUploading(true); setKpiImportError(''); setError(''); setNotice('');
+    try {
+      const body = new FormData();
+      body.append('current_year_file', currentKpiFile);
+      body.append('prior_year_file', priorKpiFile);
+      const result = await request(`/api/admin/organizations/${encodeURIComponent(selectedOrganization.id)}/kpi-imports/`, { method: 'POST', body });
+      setKpiImport(latestImportFrom(result));
+      setCurrentKpiFile(null); setPriorKpiFile(null); setKpiFileInputKey(value => value + 1);
+      await request(`/api/admin/organizations/${encodeURIComponent(selectedOrganization.id)}/kpi-imports/`)
+        .then(data => setKpiImport(latestImportFrom(data)));
+      setNotice('KPI workbooks imported. Workbook goals now use the refreshed data.');
+    } catch (err) { setKpiImportError(err.message); }
+    finally { setKpiUploading(false); }
+  };
 
   const createOrganization = async event => {
     event.preventDefault(); setSaving(true); setError(''); setNotice('');
@@ -241,6 +297,35 @@ export default function AdminPanel({ onOrganizationsChanged }) {
     {notice && <div className="admin-notice" role="status"><Check size={16} />{notice}<button type="button" aria-label="Dismiss" onClick={() => setNotice('')}><X size={15} /></button></div>}
 
     {!selectedOrganization ? <section className="admin-empty"><Building2 /><h3>No organization yet</h3><p>Create an organization below to begin managing a team.</p></section> : <>
+      <section className="admin-section admin-kpi-import-section">
+        <div className="admin-section-heading"><div><span className="admin-kicker">Workbook data</span><h3><FileSpreadsheet size={19} /> KPI workbook import</h3><p>Upload both fiscal-year workbooks for {selectedOrganization.name}.</p></div></div>
+        <p className="admin-kpi-replacement-note">A valid import replaces this organization’s normalized KPI data for both years. Previous files are not retained; saved daily overrides stay in place.</p>
+        <form className="admin-kpi-upload-form" onSubmit={uploadKpiWorkbooks}>
+          <label>Current fiscal year workbook (.xlsx)<input key={`current-${kpiFileInputKey}`} aria-label="Current fiscal year workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => setCurrentKpiFile(event.target.files?.[0] || null)} /></label>
+          <label>Prior fiscal year workbook (.xlsx)<input key={`prior-${kpiFileInputKey}`} aria-label="Prior fiscal year workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => setPriorKpiFile(event.target.files?.[0] || null)} /></label>
+          <button type="submit" className="admin-primary-button" disabled={kpiUploading || !currentKpiFile || !priorKpiFile}><Upload size={15} />{kpiUploading ? 'Uploading workbooks…' : 'Upload both workbooks'}</button>
+        </form>
+        {kpiUploading && <div className="admin-kpi-progress" role="status"><LoaderCircle className="admin-spinner" /> Uploading and validating both workbooks…<span /></div>}
+        {kpiImportError && <div className="admin-kpi-import-error" role="alert"><AlertTriangle size={16} />{kpiImportError}</div>}
+        <div className="admin-kpi-latest" aria-live="polite">
+          <div className="admin-kpi-latest-heading"><strong>Latest import</strong>{kpiImportLoading && <LoaderCircle className="admin-spinner" aria-label="Loading latest import" />}</div>
+          {!kpiImportLoading && !kpiImport && !kpiImportError && <p>No KPI workbooks have been imported for this organization.</p>}
+          {kpiImport && <>
+            <div className="admin-kpi-import-meta">
+              <span className={`admin-kpi-status ${String(kpiImport.status || 'complete').toLowerCase()}`}>{String(kpiImport.status || 'Complete').replaceAll('_', ' ')}</span>
+              {(kpiImport.current_fiscal_year || kpiImport.current_year || kpiImport.detected_current_fy) && <span>Current FY {kpiImport.current_fiscal_year || kpiImport.current_year || kpiImport.detected_current_fy}</span>}
+              {(kpiImport.prior_fiscal_year || kpiImport.prior_year || kpiImport.detected_prior_fy) && <span>Prior FY {kpiImport.prior_fiscal_year || kpiImport.prior_year || kpiImport.detected_prior_fy}</span>}
+              {(kpiImport.imported_at || kpiImport.created_at || kpiImport.uploaded_at || kpiImport.timestamp) && <span>{displayDate(kpiImport.imported_at || kpiImport.created_at || kpiImport.uploaded_at || kpiImport.timestamp)}</span>}
+              {(kpiImport.current_filename || kpiImport.prior_filename) && <span>{kpiImport.current_filename || 'Current workbook'} + {kpiImport.prior_filename || 'prior workbook'}</span>}
+              {kpiImport.imported_by && <span>Uploaded by {typeof kpiImport.imported_by === 'object' ? (kpiImport.imported_by.full_name || kpiImport.imported_by.username || kpiImport.imported_by.id) : kpiImport.imported_by}</span>}
+              {(kpiImport.daily_records_imported ?? kpiImport.daily_records) != null && <span>{kpiImport.daily_records_imported ?? kpiImport.daily_records} daily rows</span>}
+              {(kpiImport.period_records_imported ?? kpiImport.period_records) != null && <span>{kpiImport.period_records_imported ?? kpiImport.period_records} period rows</span>}
+              {kpiImport.counts && Object.entries(kpiImport.counts).map(([label, count]) => <span key={label}>{count} {label.replaceAll('_', ' ')}</span>)}
+            </div>
+            {importWarnings(kpiImport).length > 0 && <div className="admin-kpi-warnings"><strong><AlertTriangle size={14} /> Import warnings</strong><ul>{importWarnings(kpiImport).map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}</ul></div>}
+          </>}
+        </div>
+      </section>
       <section className="admin-section admin-team-section">
         <div className="admin-section-heading"><div><span className="admin-kicker">People</span><h3><Users size={19} /> Team</h3><p>Roster records imported from the schedule workbook.</p></div><span className="admin-count">{team.length}<small> / {employees.length} staff</small></span></div>
         {!selectedOrganization.is_active ? <div className="admin-inline-state"><AlertTriangle size={18} /><div><strong>Team editing is paused</strong><span>Reactivate this organization to load and edit its staff roster.</span></div></div> : <>

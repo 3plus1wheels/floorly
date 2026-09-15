@@ -109,15 +109,15 @@
 /* ── Body layout: goals on left, zone chart on right ── */
 .wb-body-layout {
   display: flex;
-  gap: 10px;
+  gap: clamp(6px, 0.7vw, 12px);
   align-items: flex-start;
   margin-top: 10px;
 }
 
 /* ── Today's Goals panel ── */
 .wb-goals-panel {
-  flex: 0 0 clamp(138px, 11.5vw, 186px);
-  min-width: clamp(128px, 10vw, 168px);
+  flex: 0 0 clamp(210px, 16vw, 270px);
+  min-width: 0;
   background: var(--color-card);
   border: 1px solid var(--color-border);
   border-radius: 16px;
@@ -134,9 +134,40 @@
   padding: clamp(4px, 0.35vw, 7px);
 }
 
+.wb-goals-comparison {
+  display: block;
+  margin-top: 2px;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+  opacity: 0.85;
+  text-transform: none;
+}
+
+.wb-kpi-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  color: var(--color-muted);
+  font-size: 11px;
+}
+.wb-kpi-status.error { border-color: rgba(185, 56, 45, 0.4); }
+.wb-kpi-save-state { margin-left: auto; color: var(--color-success); font-weight: 700; }
+.wb-kpi-save-state.saving { color: #8a6a1c; }
+.wb-kpi-save-state.error,
+.wb-kpi-save-error { color: #8f2b21; }
+.wb-kpi-save-error { flex-basis: 100%; }
+
 .wb-goals-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: clamp(9px, 0.72vw, 12px);
 }
 
@@ -147,21 +178,28 @@
 .wb-goals-table tr:last-child { border-bottom: none; }
 
 .wb-goals-label {
+  width: 64%;
   padding: clamp(2px, 0.22vw, 4px) clamp(4px, 0.4vw, 7px);
   color: var(--color-muted);
   text-transform: uppercase;
   font-size: clamp(8px, 0.65vw, 11px);
   font-weight: 600;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: break-word;
+  line-height: 1.15;
 }
 
 .wb-goals-value {
+  width: 36%;
   padding: clamp(2px, 0.22vw, 4px) clamp(5px, 0.45vw, 8px);
   text-align: right;
   font-weight: 700;
   font-size: clamp(9px, 0.72vw, 13px);
   color: var(--color-text);
-  min-width: clamp(55px, 5vw, 90px);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wb-goals-plain { cursor: default; }
@@ -342,6 +380,11 @@
   transition: background 0.15s;
 }
 .wb-reset-btn:hover { background: rgba(185, 56, 45, 0.1); }
+.wb-reset-btn:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+.wb-reset-btn:disabled:hover { background: transparent; }
 
 /* ── Customize KPIs button ── */
 .wb-customize-btn {
@@ -636,10 +679,111 @@
 .wb-hour-clickable { cursor: pointer; }
 .wb-overridden { outline: 2px solid #fff9 inset; }
 
+/* ── Responsive workbook ── */
+@media screen and (max-width: 1100px) {
+  .wb-goals-panel {
+    flex-basis: 210px;
+  }
+
+  .wb-table {
+    font-size: 8px;
+  }
+
+  .wb-table thead tr:nth-child(2) th,
+  .wb-name-cell,
+  .wb-shift-cell,
+  .wb-hour-cell {
+    padding-left: 3px;
+    padding-right: 3px;
+  }
+}
+
+@media screen and (max-width: 760px) {
+  .wb-topbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .wb-topbar-actions {
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .wb-day-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .wb-day-tab {
+    min-width: 0;
+  }
+
+  .wb-body-layout {
+    flex-direction: column;
+  }
+
+  .wb-goals-panel {
+    flex: none;
+    width: 100%;
+  }
+
+  .wb-goals-label {
+    width: 62%;
+  }
+
+  .wb-goals-value {
+    width: 38%;
+  }
+
+  .wb-zone-section {
+    width: 100%;
+  }
+
+  .wb-table {
+    min-width: 720px;
+  }
+
+  .wb-hs-table {
+    min-width: 760px;
+  }
+}
+
+@media screen and (max-width: 420px) {
+  .wb-root {
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+
+  .wb-week-nav {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .wb-week-label {
+    min-width: 0;
+  }
+
+  .wb-goals-header {
+    font-size: 12px;
+  }
+
+  .wb-goals-label,
+  .wb-goals-section-header {
+    font-size: 10px;
+  }
+
+  .wb-goals-value {
+    font-size: 11px;
+  }
+}
+
 /* ── Print styles ── */
 @page {
   size: A4 landscape;
-  margin: 6mm 6mm 6mm 6mm;
+  /* No page margin means Chrome has no header/footer area to render into. */
+  margin: 0;
 }
 
 @media print {
@@ -657,6 +801,7 @@
   .wb-day-tabs,
   .wb-topbar,
   .wb-kpi-editor,
+  .wb-kpi-status,
   .wb-import-result,
   .wb-print-fit-note,
   .wb-legend,
@@ -679,7 +824,8 @@
   /* One-page density control */
   .wb-root {
     margin: 0 !important;
-    padding: 0 !important;
+    /* Keep former page inset inside app content, away from browser print chrome. */
+    padding: 6mm !important;
     color: #000 !important;
     width: 100% !important;
     box-sizing: border-box;
@@ -692,6 +838,10 @@
 
   .wb-root.wb-print-compact {
     zoom: 80%;
+  }
+
+  .wb-root.wb-print-extra-compact {
+    zoom: 68%;
   }
 
   .wb-root.wb-print-hide-optional {
@@ -903,6 +1053,47 @@
     font-size: 5.6px !important;
   }
 
+  .wb-root.wb-print-extra-compact .wb-hs-table {
+    font-size: 5.7px !important;
+  }
+
+  .wb-root.wb-print-extra-compact .wb-table {
+    font-size: 5.4px !important;
+  }
+
+  .wb-root.wb-print-extra-compact .wb-goals-table {
+    font-size: 5px !important;
+  }
+
+  .wb-root.wb-print-extra-compact .wb-hs-row-label,
+  .wb-root.wb-print-extra-compact .wb-hs-col-header,
+  .wb-root.wb-print-extra-compact .wb-hs-cell,
+  .wb-root.wb-print-extra-compact .wb-name-cell,
+  .wb-root.wb-print-extra-compact .wb-shift-cell,
+  .wb-root.wb-print-extra-compact .wb-hour-cell,
+  .wb-root.wb-print-extra-compact .wb-goals-label,
+  .wb-root.wb-print-extra-compact .wb-goals-value,
+  .wb-root.wb-print-extra-compact .wb-goals-section-header {
+    padding: 1px !important;
+    line-height: 1.05 !important;
+  }
+
+  .wb-root.wb-print-extra-compact .wb-goals-panel {
+    flex: 0 0 94px !important;
+    width: 94px !important;
+    min-width: 94px !important;
+  }
+
+  .wb-root.wb-print-extra-compact .wb-goals-label,
+  .wb-root.wb-print-extra-compact .wb-goals-value {
+    font-size: 4.8px !important;
+  }
+
+  .wb-root.wb-print-extra-compact .wb-hs-row-label {
+    width: 82px !important;
+    font-size: 5.2px !important;
+  }
+
   .wb-root.wb-print-hide-optional .wb-hs-row-optional {
     display: none !important;
   }
@@ -912,6 +1103,3 @@
     border-bottom: 1px solid #c9c9c9 !important;
   }
 }
-
-
-

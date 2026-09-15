@@ -6,6 +6,7 @@ const config = {
   webOrigins: ['https://floorly.example'],
   apiOrigins: ['https://api.floorly.example'],
   kronosScheduleUrl: 'https://kronos.example/ess#/location-schedule',
+  kronosOrigins: ['https://kronos.example', 'https://review-kronos.example'],
 };
 const message = { type: 'IMPORT_KRONOS_SCHEDULE', organization_id: 7, week_start: '2026-09-07', ticket: 'short-ticket', sync_url: 'https://api.floorly.example/api/schedule/kronos-sync/' };
 const sender = { url: 'https://floorly.example/dashboard' };
@@ -14,7 +15,7 @@ const snapshots = [{
   rows: [{ rowIndex: '0', employee_name: 'Doe, Jane', primary_job: 'Stylist', cells: [{ colId: 'mon', titles: ['9:00 AM - 5:00 PM'] }] }],
 }];
 
-function harness({ tabs = [{ id: 4, active: true }], capture = { ok: true, snapshots }, response = { ok: true, status: 200, json: async () => ({ imported: 1 }) } } = {}) {
+function harness({ tabs = [{ id: 4, active: true, url: config.kronosScheduleUrl }], capture = { ok: true, snapshots }, response = { ok: true, status: 200, json: async () => ({ imported: 1 }) } } = {}) {
   const calls = { query: [], create: [], update: [], send: [], fetch: [] };
   const chromeApi = { tabs: {
     query: async value => (calls.query.push(value), tabs),
@@ -73,6 +74,25 @@ test('rejects unconfigured backend URL', async () => {
   assert.equal((await run({ ...message, sync_url: 'https://evil.example/api/schedule/kronos-sync/' }, sender)).code, 'INVALID_SYNC_URL');
   assert.equal((await run({ ...message, sync_url: 'https://api.floorly.example/proxy/api/schedule/kronos-sync/' }, sender)).code, 'INVALID_SYNC_URL');
   assert.equal(calls.query.length, 0);
+});
+
+test('rejects hostile Kronos tab URL', async () => {
+  const { calls, run } = harness({ tabs: [{ id: 4, active: true, url: 'https://evil.example/ess#/location-schedule' }] });
+  assert.equal((await run(message, sender)).code, 'KRONOS_URL_DENIED');
+  assert.equal(calls.send.length, 0);
+});
+
+test('accepts configured reviewer Kronos origin', async () => {
+  const { calls, run } = harness({ tabs: [{ id: 5, active: true, url: 'https://review-kronos.example/ess#/location-schedule' }] });
+  assert.equal((await run(message, sender)).code, 'IMPORT_COMPLETE');
+  assert.equal(calls.fetch.length, 1);
+});
+
+test('rejects oversized captured schedule', async () => {
+  const huge = 'x'.repeat(5 * 1024 * 1024);
+  const { calls, run } = harness({ capture: { ok: true, snapshots: [{ headers: [], rows: [{ rowId: '1', employee_name: huge, cells: [] }] }] } });
+  assert.equal((await run(message, sender)).code, 'PAYLOAD_TOO_LARGE');
+  assert.equal(calls.fetch.length, 0);
 });
 
 test('maps expired ticket response to actionable code', async () => {

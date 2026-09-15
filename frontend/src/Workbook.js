@@ -39,6 +39,36 @@ const DEFAULT_KPI_ROWS = [
   { id: 'cel',          label: 'CEL SIGN-OFF (INITIALS)', key: 'cel',         optional: true },
 ];
 
+const EMPTY_GOALS = {
+  daySalesTarget: null, stretchTarget: null, lastYearSales: null,
+  lastYearTraffic: null, trafficTrend: null, projectedTraffic: null,
+  transactionGoal: null, conversionTarget: null, upt: null, atv: null,
+  monthSalesPlan: null, monthToDateSales: null,
+};
+
+function defaultHourly() {
+  return DEFAULT_SEGMENTS.map((_, i) => ({
+    pct: DEFAULT_CONTRIBUTIONS[i] ?? 0,
+    actual: null, traffic: null, transactions: null, upt: null, atv: null, other: null, cel: '',
+  }));
+}
+
+function hourlyArray(hourlyByHour) {
+  return DEFAULT_SEGMENTS.map((segment, i) => ({
+    ...defaultHourly()[i],
+    ...(hourlyByHour?.[String(segment.start)] || {}),
+  }));
+}
+
+function mergeSessionCustomHourly(serverHourly, currentHourly) {
+  return serverHourly.map((segment, index) => {
+    const customValues = Object.fromEntries(
+      Object.entries(currentHourly[index] || {}).filter(([key]) => key.startsWith('custom_'))
+    );
+    return { ...segment, ...customValues };
+  });
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function parseCurrency(val) {
   if (val === '' || val === null || val === undefined) return null;
@@ -57,20 +87,28 @@ function formatPct(n) {
 }
 
 // Editable cell that can switch between display and input mode
-function EditCell({ value, onChange, format, className, style, placeholder }) {
+function EditCell({ value, onChange, format, className, style, placeholder, text = false, ariaLabel }) {
   const [editing, setEditing] = useState(false);
   const [raw, setRaw] = useState('');
   const inputRef = useRef(null);
+  const committedRef = useRef(false);
 
   const startEdit = () => {
     setRaw(value !== null && value !== undefined && value !== '' ? String(value) : '');
+    committedRef.current = false;
     setEditing(true);
     setTimeout(() => inputRef.current?.select(), 0);
   };
 
   const commit = () => {
-    const num = parseFloat(String(raw).replace(/[$,%]/g, ''));
-    onChange(isNaN(num) ? '' : num);
+    if (committedRef.current) return;
+    committedRef.current = true;
+    if (text) {
+      onChange(raw.trim());
+    } else {
+      const num = parseFloat(String(raw).replace(/[$,%]/g, ''));
+      onChange(isNaN(num) ? '' : num);
+    }
     setEditing(false);
   };
 
@@ -80,10 +118,14 @@ function EditCell({ value, onChange, format, className, style, placeholder }) {
         <input
           ref={inputRef}
           className="wb-inline-input"
+          aria-label={ariaLabel}
           value={raw}
           onChange={e => setRaw(e.target.value)}
           onBlur={commit}
-          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') { committedRef.current = true; setEditing(false); }
+          }}
           placeholder={placeholder}
         />
       </td>
@@ -95,7 +137,7 @@ function EditCell({ value, onChange, format, className, style, placeholder }) {
     : <span className="wb-cell-empty">{placeholder || '—'}</span>;
 
   return (
-    <td className={`${className || ''} wb-editable`} style={style} onClick={startEdit} title="Click to edit">
+    <td className={`${className || ''} wb-editable`} style={style} onClick={startEdit} title="Click to edit" aria-label={ariaLabel}>
       {display}
     </td>
   );
@@ -222,18 +264,17 @@ function ZoneCell({ zone, cellKey, overrides, setOverrides }) {
 }
 
 // ─── Today's Goals panel ─────────────────────────────────────────────────────
-function TodaysGoals({ goals, onChange, segments }) {
-  // goals: { daySalesTarget, stretchTarget, lastYearSales, lastYearTraffic,
-  //           trafficTrend, projectedTraffic, transactionGoal, conversionTarget,
-  //           upt, atv, monthSalesPlan, monthToDateSales }
-  const set = (key) => (val) => onChange({ ...goals, [key]: val });
+function TodaysGoals({ goals, sources, date, comparisonDate, onCommit }) {
+  const set = (key) => (val) => onCommit(key, val);
 
-  const pctOfPlan = goals.monthSalesPlan && goals.monthToDateSales
-    ? ((parseCurrency(goals.monthToDateSales) / parseCurrency(goals.monthSalesPlan)) * 100).toFixed(1) + '%'
-    : '';
-  const monthToGo = goals.monthSalesPlan && goals.monthToDateSales
-    ? formatCurrency(parseCurrency(goals.monthSalesPlan) - parseCurrency(goals.monthToDateSales))
-    : '';
+  const plan = parseCurrency(goals.monthSalesPlan);
+  const mtd = parseCurrency(goals.monthToDateSales);
+  const pctOfPlan = goals.percentToMonthSalesPlan != null
+    ? `${Number(goals.percentToMonthSalesPlan).toFixed(1)}%`
+    : plan !== null && plan !== 0 && mtd !== null ? `${((mtd / plan) * 100).toFixed(1)}%` : '—';
+  const monthToGo = goals.monthToGo != null
+    ? formatCurrency(goals.monthToGo)
+    : plan !== null && mtd !== null ? formatCurrency(plan - mtd) : '—';
 
   // Compute projected traffic from last year + trend
   const computedProjected = (() => {
@@ -241,57 +282,68 @@ function TodaysGoals({ goals, onChange, segments }) {
     const trend = goals.trafficTrend !== '' && goals.trafficTrend !== null && goals.trafficTrend !== undefined
       ? parseFloat(goals.trafficTrend) : null;
     if (ly !== null && trend !== null) return Math.round(ly * (1 + trend / 100));
-    return null;
+    return goals.projectedTraffic ?? null;
   })();
+
+  const renderLabel = (key, label) => (
+    <td
+      className="wb-goals-label"
+      title={sources?.[key] ? `Source: ${sources[key].replace(/_/g, ' ')}` : undefined}
+    >
+      <span>{label}</span>
+    </td>
+  );
+  const dateLabel = date ? new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '.') : '—';
+  const comparisonLabel = comparisonDate ? new Date(`${comparisonDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
 
   return (
     <div className="wb-goals-panel">
-      <div className="wb-goals-header">TODAY'S GOALS</div>
+      <div className="wb-goals-header">TODAY'S GOALS{comparisonLabel && <span className="wb-goals-comparison">Compared with {comparisonLabel}</span>}</div>
       <table className="wb-goals-table">
         <tbody>
           <tr>
             <td className="wb-goals-label">DATE</td>
-            <td className="wb-goals-value wb-goals-plain">{new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '.')}</td>
+            <td className="wb-goals-value wb-goals-plain">{dateLabel}</td>
           </tr>
           <tr className="wb-goals-highlight">
-            <td className="wb-goals-label">DAY SALES TARGET</td>
-            <EditCell value={goals.daySalesTarget} onChange={set('daySalesTarget')} format={formatCurrency} className="wb-goals-value" placeholder="$0" />
+            {renderLabel('daySalesTarget', 'DAY SALES TARGET')}
+            <EditCell value={goals.daySalesTarget} onChange={set('daySalesTarget')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit day sales target" />
           </tr>
           <tr className="wb-goals-highlight">
-            <td className="wb-goals-label">STRETCH TARGET</td>
-            <EditCell value={goals.stretchTarget} onChange={set('stretchTarget')} format={formatCurrency} className="wb-goals-value" placeholder="$0" />
+            {renderLabel('stretchTarget', 'STRETCH TARGET')}
+            <EditCell value={goals.stretchTarget} onChange={set('stretchTarget')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit stretch target" />
           </tr>
           <tr>
-            <td className="wb-goals-label">LAST YEAR SALES</td>
-            <EditCell value={goals.lastYearSales} onChange={set('lastYearSales')} format={formatCurrency} className="wb-goals-value" placeholder="$0" />
+            {renderLabel('lastYearSales', 'LAST YEAR SALES')}
+            <EditCell value={goals.lastYearSales} onChange={set('lastYearSales')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit last year sales" />
           </tr>
           <tr>
-            <td className="wb-goals-label">LAST YEAR TRAFFIC</td>
-            <EditCell value={goals.lastYearTraffic} onChange={set('lastYearTraffic')} className="wb-goals-value" placeholder="0" />
+            {renderLabel('lastYearTraffic', 'LAST YEAR TRAFFIC')}
+            <EditCell value={goals.lastYearTraffic} onChange={set('lastYearTraffic')} className="wb-goals-value" placeholder="—" ariaLabel="Edit last year traffic" />
           </tr>
           <tr>
-            <td className="wb-goals-label">CURRENT TRAFFIC TREND (+/-)</td>
-            <EditCell value={goals.trafficTrend} onChange={set('trafficTrend')} format={v => v + '%'} className="wb-goals-value" placeholder="0%" />
+            {renderLabel('trafficTrend', 'CURRENT TRAFFIC TREND (+/-)')}
+            <EditCell value={goals.trafficTrend} onChange={set('trafficTrend')} format={v => v + '%'} className="wb-goals-value" placeholder="—" ariaLabel="Edit current traffic trend" />
           </tr>
           <tr className="wb-goals-computed">
-            <td className="wb-goals-label">PROJECTED TRAFFIC</td>
-            <td className="wb-goals-value">{computedProjected !== null ? computedProjected : (goals.projectedTraffic || '—')}</td>
+            {renderLabel('projectedTraffic', 'PROJECTED TRAFFIC')}
+            <td className="wb-goals-value">{computedProjected !== null ? computedProjected : '—'}</td>
           </tr>
           <tr className="wb-goals-highlight">
-            <td className="wb-goals-label">TRANSACTION GOAL</td>
-            <EditCell value={goals.transactionGoal} onChange={set('transactionGoal')} className="wb-goals-value" placeholder="0" />
+            {renderLabel('transactionGoal', 'TRANSACTION GOAL')}
+            <EditCell value={goals.transactionGoal} onChange={set('transactionGoal')} className="wb-goals-value" placeholder="—" ariaLabel="Edit transaction goal" />
           </tr>
           <tr>
-            <td className="wb-goals-label">CONVERSION TARGET</td>
-            <EditCell value={goals.conversionTarget} onChange={set('conversionTarget')} format={v => v + '%'} className="wb-goals-value" placeholder="0%" />
+            {renderLabel('conversionTarget', 'CONVERSION TARGET')}
+            <EditCell value={goals.conversionTarget} onChange={set('conversionTarget')} format={v => v + '%'} className="wb-goals-value" placeholder="—" ariaLabel="Edit conversion target" />
           </tr>
           <tr>
-            <td className="wb-goals-label">UPT</td>
-            <EditCell value={goals.upt} onChange={set('upt')} className="wb-goals-value" placeholder="0.00" />
+            {renderLabel('upt', 'UPT')}
+            <EditCell value={goals.upt} onChange={set('upt')} className="wb-goals-value" placeholder="—" ariaLabel="Edit UPT" />
           </tr>
           <tr>
-            <td className="wb-goals-label">ATV</td>
-            <EditCell value={goals.atv} onChange={set('atv')} format={formatCurrency} className="wb-goals-value" placeholder="$0" />
+            {renderLabel('atv', 'ATV')}
+            <EditCell value={goals.atv} onChange={set('atv')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit ATV" />
           </tr>
 
           {/* Month to date */}
@@ -299,20 +351,20 @@ function TodaysGoals({ goals, onChange, segments }) {
             <td colSpan={2} className="wb-goals-section-header">MONTH TO DATE PERFORMANCE</td>
           </tr>
           <tr>
-            <td className="wb-goals-label">MONTH SALES PLAN</td>
-            <EditCell value={goals.monthSalesPlan} onChange={set('monthSalesPlan')} format={formatCurrency} className="wb-goals-value" placeholder="$0" />
+            {renderLabel('monthSalesPlan', 'MONTH SALES PLAN')}
+            <EditCell value={goals.monthSalesPlan} onChange={set('monthSalesPlan')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit month sales plan" />
           </tr>
           <tr>
-            <td className="wb-goals-label">MONTH TO DATE SALES</td>
-            <EditCell value={goals.monthToDateSales} onChange={set('monthToDateSales')} format={formatCurrency} className="wb-goals-value" placeholder="$0" />
+            {renderLabel('monthToDateSales', 'MONTH TO DATE SALES')}
+            <EditCell value={goals.monthToDateSales} onChange={set('monthToDateSales')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit month to date sales" />
           </tr>
           <tr>
-            <td className="wb-goals-label">% TO MONTH SALES PLAN</td>
-            <td className="wb-goals-value">{pctOfPlan || '—'}</td>
+            {renderLabel('percentToMonthSalesPlan', '% TO MONTH SALES PLAN')}
+            <td className="wb-goals-value">{pctOfPlan}</td>
           </tr>
           <tr>
-            <td className="wb-goals-label">MONTH TO GO</td>
-            <td className="wb-goals-value">{monthToGo || '—'}</td>
+            {renderLabel('monthToGo', 'MONTH TO GO')}
+            <td className="wb-goals-value">{monthToGo}</td>
           </tr>
         </tbody>
       </table>
@@ -321,7 +373,7 @@ function TodaysGoals({ goals, onChange, segments }) {
 }
 
 // ─── Hourly Segments panel ────────────────────────────────────────────────────
-function HourlySegments({ goals, hourly, setHourly, segments, kpiRows, printFitMode }) {
+function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kpiRows, printFitMode }) {
   const daySales   = parseCurrency(goals.daySalesTarget) || 0;
   const dayStretch = parseCurrency(goals.stretchTarget)  || 0;
 
@@ -346,9 +398,13 @@ function HourlySegments({ goals, hourly, setHourly, segments, kpiRows, printFitM
     cumActual.push(a !== null ? runActual : null);
   });
 
-  const setCell = (i, key) => (val) => {
-    setHourly(prev => {
-      const next = [...prev];
+  const setCell = (i, key, persist = true) => (val) => {
+    if (persist) {
+      onHourlyCommit(String(segments[i].start), key, val);
+      return;
+    }
+    setHourly(previous => {
+      const next = [...previous];
       next[i] = { ...next[i], [key]: val };
       return next;
     });
@@ -396,8 +452,9 @@ function HourlySegments({ goals, hourly, setHourly, segments, kpiRows, printFitM
       optional: !!row.optional || String(row.id).startsWith('custom_'),
       cells: segments.map((_, i) => ({
         value: hourly[i]?.[row.key] ?? '',
-        onChange: setCell(i, row.key),
+        onChange: setCell(i, row.key, !String(row.id).startsWith('custom_')),
         format: fmt,
+        text: row.key === 'cel',
         editable: true,
       })),
     };
@@ -438,6 +495,8 @@ function HourlySegments({ goals, hourly, setHourly, segments, kpiRows, printFitM
                         value={cell.value}
                         onChange={cell.onChange}
                         format={cell.format}
+                        text={cell.text}
+                        ariaLabel={`Edit ${row.label} ${segments[ci].label}`}
                         className={`wb-hs-cell${cell.derived ? ' wb-hs-derived' : ''}`}
                       />
                     );
@@ -468,6 +527,12 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState(null);
   const [overrides, setOverrides] = useState({});
+  const [kpiState, setKpiState] = useState(null);
+  const [saveStatus, setSaveStatus] = useState('saved');
+  const [saveError, setSaveError] = useState('');
+  const saveQueueRef = useRef(Promise.resolve());
+  const loadRequestRef = useRef(0);
+  const saveRequestRef = useRef(0);
 
   // KPI row configuration — shared across all days
   const [kpiRows, setKpiRows] = useState(DEFAULT_KPI_ROWS);
@@ -475,47 +540,116 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const [newKpiLabel, setNewKpiLabel] = useState('');
   const [printFitMode, setPrintFitMode] = useState('balanced');
 
-  // Goals state (persists per day in local storage key)
-  const [goals, setGoals] = useState({
-    daySalesTarget: '', stretchTarget: '', lastYearSales: '',
-    lastYearTraffic: '', trafficTrend: '', projectedTraffic: '',
-    transactionGoal: '', conversionTarget: '', upt: '', atv: '',
-    monthSalesPlan: '', monthToDateSales: '',
-  });
-
-  // Hourly state: array of per-segment objects
-  const [hourly, setHourly] = useState(() => DEFAULT_SEGMENTS.map((_, i) => ({
-    pct: DEFAULT_CONTRIBUTIONS[i] ?? 0,
-    actual: '', traffic: '', transactions: '', upt: '', atv: '', other: '', cel: '',
-  })));
+  const [goals, setGoals] = useState(EMPTY_GOALS);
+  const [hourly, setHourly] = useState(defaultHourly);
 
   const segments = DEFAULT_SEGMENTS;
 
   const token = localStorage.getItem('access_token');
+  const requestedDate = toYMD(addDays(weekStart, DAYS.indexOf(activeDay)));
+  const scopeKey = `${selectedOrganizationId}:${requestedDate}`;
+  const currentScopeRef = useRef(scopeKey);
+  currentScopeRef.current = scopeKey;
 
   useEffect(() => {
     onWeekChange?.(toYMD(weekStart));
   }, [weekStart, onWeekChange]);
 
   const fetchWorkbook = useCallback(async () => {
+    const requestId = ++loadRequestRef.current;
+    const requestedScope = `${selectedOrganizationId}:${toYMD(addDays(weekStart, DAYS.indexOf(activeDay)))}`;
     setLoading(true);
     setError(null);
     setOverrides({});
+    setData(null);
+    setKpiState(null);
+    setGoals(EMPTY_GOALS);
+    setHourly(current => mergeSessionCustomHourly(defaultHourly(), current));
+    setSaveError('');
+    setSaveStatus('saved');
+    saveRequestRef.current += 1;
     try {
       const res = await fetch(
         `${API_BASE}/api/schedule/workbook/?week_start=${toYMD(weekStart)}&day=${activeDay}`,
         { headers: { Authorization: `Bearer ${token}`, 'X-Organization-ID': selectedOrganizationId } }
       );
       if (!res.ok) throw new Error('Failed to fetch workbook');
-      setData(await res.json());
+      const payload = await res.json();
+      if (requestId !== loadRequestRef.current || currentScopeRef.current !== requestedScope) return;
+      setData(payload);
+      const kpi = payload.kpi || null;
+      setKpiState(kpi);
+      setGoals(kpi?.goals || EMPTY_GOALS);
+      setHourly(current => mergeSessionCustomHourly(hourlyArray(kpi?.hourly), current));
     } catch (err) {
-      setError(err.message);
+      if (requestId === loadRequestRef.current && currentScopeRef.current === requestedScope) setError(err.message);
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
   }, [weekStart, activeDay, token, selectedOrganizationId]);
 
   useEffect(() => { fetchWorkbook(); }, [fetchWorkbook, refreshVersion]);
+
+  const saveKpiPatch = useCallback((patch) => {
+    const targetDate = kpiState?.date || requestedDate;
+    const requestedScope = `${selectedOrganizationId}:${targetDate}`;
+    const requestId = ++saveRequestRef.current;
+    const run = async () => {
+      const response = await fetch(`${API_BASE}/api/schedule/kpi-days/${targetDate}/`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-Organization-ID': selectedOrganizationId,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(patch),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Could not save workbook changes.');
+      if (requestId === saveRequestRef.current && currentScopeRef.current === requestedScope) {
+        setKpiState(body);
+        setGoals(body.goals || EMPTY_GOALS);
+        setHourly(current => mergeSessionCustomHourly(hourlyArray(body.hourly), current));
+        setSaveStatus('saved');
+        setSaveError('');
+      }
+    };
+    setSaveStatus('saving');
+    setSaveError('');
+    const task = saveQueueRef.current.catch(() => {}).then(run);
+    saveQueueRef.current = task;
+    task.catch((err) => {
+      if (requestId === saveRequestRef.current && currentScopeRef.current === requestedScope) {
+        setSaveStatus('error');
+        setSaveError(err.message || 'Could not save workbook changes.');
+      }
+    });
+  }, [kpiState?.date, requestedDate, selectedOrganizationId, token]);
+
+  const commitGoal = useCallback((key, value) => {
+    setGoals(current => ({
+      ...current,
+      [key]: value === '' ? (kpiState?.baseGoals?.[key] ?? null) : value,
+    }));
+    saveKpiPatch(value === ''
+      ? { goal_resets: [key] }
+      : { goal_updates: { [key]: value } });
+  }, [kpiState, saveKpiPatch]);
+
+  const resetAllKpis = useCallback(() => {
+    const goalResets = kpiState?.overrides || [];
+    if (!goalResets.length) return;
+    setGoals(current => ({ ...current, ...kpiState.baseGoals }));
+    saveKpiPatch({ goal_resets: goalResets });
+  }, [kpiState, saveKpiPatch]);
+
+  const commitHourly = useCallback((hour, key, value) => {
+    const normalizedValue = value === '' ? null : value;
+    setHourly(current => current.map((segment, i) => (
+      String(DEFAULT_SEGMENTS[i].start) === hour ? { ...segment, [key]: value } : segment
+    )));
+    saveKpiPatch({ hourly_updates: { [hour]: { [key]: normalizedValue } } });
+  }, [saveKpiPatch]);
 
   const weekDates = DAYS.map((_, i) => addDays(weekStart, i));
   const hasOverrides = Object.keys(overrides).length > 0;
@@ -536,9 +670,17 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
           <button className="wb-today-btn" onClick={() => setWeekStart(getMondayOfWeek(new Date()))}>Today</button>
         </div>
         <div className="wb-topbar-actions">
+          <button
+            className="wb-reset-btn"
+            onClick={resetAllKpis}
+            disabled={!kpiState?.overrides?.length || saveStatus === 'saving'}
+            title="Reset all manually edited goals to imported or calculated values"
+          >
+            Reset KPIs
+          </button>
           {hasOverrides && (
             <button className="wb-reset-btn" onClick={() => setOverrides({})}>
-              Reset overrides
+              Reset zones
             </button>
           )}
           <button
@@ -557,6 +699,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
           >
             <option value="balanced">Print Fit: Balanced</option>
             <option value="compact">Print Fit: Compact Rows</option>
+            <option value="extra-compact">Print Fit: Fit More</option>
             <option value="hide-optional">Print Fit: Hide Optional KPI Rows</option>
           </select>
           <button className="wb-print-btn" onClick={handlePrint} title="Print workbook">
@@ -568,6 +711,15 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
       {printFitMode === 'hide-optional' && optionalKpiCount > 0 && (
         <div className="wb-print-fit-note">Print mode will hide {optionalKpiCount} optional KPI row{optionalKpiCount > 1 ? 's' : ''} to keep one-page output.</div>
       )}
+      <div className={`wb-kpi-status${saveStatus === 'error' ? ' error' : ''}`} aria-live="polite">
+        <span>{kpiState?.import
+          ? `FY${kpiState.import.fiscalYear} workbook imported ${new Date(kpiState.import.importedAt).toLocaleDateString()}`
+          : 'No KPI workbook data for this date'}</span>
+        <span className={`wb-kpi-save-state ${saveStatus}`}>
+          {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'error' ? 'Save failed' : 'Saved'}
+        </span>
+        {saveError && <span className="wb-kpi-save-error">{saveError} Your latest edit is shown here but may not be shared.</span>}
+      </div>
       {/* ── KPI editor panel ── */}
       {editingKpis && (
         <div className="wb-kpi-editor">
@@ -635,6 +787,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
         goals={goals}
         hourly={hourly}
         setHourly={setHourly}
+        onHourlyCommit={commitHourly}
         segments={segments}
         kpiRows={kpiRows}
         printFitMode={printFitMode}
@@ -643,7 +796,13 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
       {/* ── Main body: Goals + Zone Chart side by side ── */}
       <div className="wb-body-layout">
         {/* Left: Today's Goals */}
-        <TodaysGoals goals={goals} onChange={setGoals} segments={segments} />
+        <TodaysGoals
+          goals={goals}
+          sources={kpiState?.sources}
+          date={kpiState?.date || data?.date}
+          comparisonDate={kpiState?.comparisonDate}
+          onCommit={commitGoal}
+        />
 
         {/* Right: Zone chart */}
         <div className="wb-zone-section">

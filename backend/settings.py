@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 
 # Load environment variables from .env file
 load_dotenv()
@@ -25,13 +26,41 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ['SECRET_KEY']
+def _env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+def _env_list(name, default=''):
+    return [item.strip() for item in os.getenv(name, default).split(',') if item.strip()]
+
+
+DEPLOYMENT_ENV = os.getenv('DJANGO_ENV', 'development').strip().lower()
+DEBUG = _env_bool('DEBUG', DEPLOYMENT_ENV != 'production')
+SECRET_KEY = os.getenv('SECRET_KEY', '')
+if DEPLOYMENT_ENV == 'production' and (DEBUG or len(SECRET_KEY) < 50):
+    raise ImproperlyConfigured('Production requires DEBUG=False and SECRET_KEY of at least 50 characters.')
+if not SECRET_KEY:
+    SECRET_KEY = 'development-only-insecure-key-do-not-use-in-production'
+
+ALLOWED_HOSTS = _env_list('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+CSRF_TRUSTED_ORIGINS = _env_list('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000')
+PRIVACY_POLICY_URL = os.getenv('PRIVACY_POLICY_URL', 'https://floorly.vovanguyen.com/privacy')
+
+# Reverse proxy/security controls. Production template enables these explicitly.
+USE_HTTPS = _env_bool('SECURE_SSL_REDIRECT', False)
+SECURE_SSL_REDIRECT = USE_HTTPS
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https') if _env_bool('TRUST_PROXY_SSL_HEADER', False) else None
+SESSION_COOKIE_SECURE = _env_bool('SESSION_COOKIE_SECURE', USE_HTTPS)
+CSRF_COOKIE_SECURE = _env_bool('CSRF_COOKIE_SECURE', USE_HTTPS)
+SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '0'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', False)
+SECURE_HSTS_PRELOAD = _env_bool('SECURE_HSTS_PRELOAD', False)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = os.getenv('SECURE_REFERRER_POLICY', 'same-origin')
+X_FRAME_OPTIONS = 'DENY'
 
 # Application definition
 
@@ -164,7 +193,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOWED_ORIGINS = os.getenv(
     'CORS_ALLOWED_ORIGINS', 
     'http://localhost:3000,http://127.0.0.1:3000'
-).split(',')
+)
+CORS_ALLOWED_ORIGINS = _env_list('CORS_ALLOWED_ORIGINS', CORS_ALLOWED_ORIGINS)
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -177,8 +207,16 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': os.getenv('API_ANON_RATE', '30/minute'),
+        'user': os.getenv('API_USER_RATE', '300/minute'),
+    },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': int(os.getenv('API_PAGINATION_SIZE', '10'))
 }

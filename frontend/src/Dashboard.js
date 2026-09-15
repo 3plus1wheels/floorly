@@ -8,6 +8,7 @@ import API_BASE from './config';
 import FloorlyLogo from './FloorlyLogo';
 import { EXTENSION_STORE_URL, getCurrentEmployeeMapping, importFromKronos, setCurrentEmployeeMapping } from './kronosExtension';
 import { applyTheme, isValidHex, normalizeTheme, THEME_HEX_FIELDS, THEME_PRESETS } from './theme';
+import { PRIVACY_POLICY_VERSION } from './LegalPages';
 import './App.css';
 
 const PRESET_ORDER = ['classic', 'ocean', 'forest'];
@@ -121,6 +122,19 @@ function EmployeeIdentityModal({ mapping, selectedEmployeeId, saving, onSelect, 
   );
 }
 
+function ImportConsentModal({ open, checked, onCheck, onConfirm, onClose }) {
+  if (!open) return null;
+  return <div className="settings-modal-backdrop" role="presentation" onClick={onClose}>
+    <div className="settings-modal consent-modal" role="dialog" aria-modal="true" aria-labelledby="import-consent-title" onClick={event => event.stopPropagation()}>
+      <div className="settings-modal-header"><h3 id="import-consent-title">Before importing from Kronos</h3><button className="settings-close-btn" onClick={onClose}>Close</button></div>
+      <p className="settings-help">Floorly will read schedule data visible in your authorized Kronos session and send it to Floorly for your selected organization.</p>
+      <ul className="consent-list"><li>Data: employee names, job roles, schedule dates and shift times, plus organization ID.</li><li>Purpose: build your Floorly workbook and floor-planning views.</li><li>Retention: shifts for 12 months; employee records until organization deletion; encrypted backups up to 30 days.</li></ul>
+      <label className="consent-check"><input type="checkbox" checked={checked} onChange={event => onCheck(event.target.checked)} /><span>I understand and consent to this import under the <a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a> (version {PRIVACY_POLICY_VERSION}).</span></label>
+      <div className="settings-actions-row"><button className="settings-save-btn" disabled={!checked} onClick={onConfirm}>Continue to import</button></div>
+    </div>
+  </div>;
+}
+
 function Dashboard() {
   const [activeTab, setActiveTab] = useState('workbook');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -135,6 +149,8 @@ function Dashboard() {
   const [employeeMapping, setEmployeeMapping] = useState(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [savingEmployeeMapping, setSavingEmployeeMapping] = useState(false);
+  const [consentOpen, setConsentOpen] = useState(false);
+  const [consentChecked, setConsentChecked] = useState(false);
   const [workbookVersion, setWorkbookVersion] = useState(0);
   const [selectedWeekStart, setSelectedWeekStart] = useState('');
   const { user, logout, selectedOrganizationId, selectOrganization, refreshUser } = useAuth();
@@ -161,6 +177,8 @@ function Dashboard() {
         organizationId: selectedOrganizationId,
         weekStart: selectedWeekStart,
         accessToken: localStorage.getItem('access_token'),
+        consent: true,
+        privacyPolicyVersion: PRIVACY_POLICY_VERSION,
         onState: setKronosState,
       });
       setWorkbookVersion(value => value + 1);
@@ -175,7 +193,7 @@ function Dashboard() {
     }
   };
 
-  const handleKronosImport = async () => {
+  const handleKronosImportWithConsent = async () => {
     setKronosBusy(true);
     setKronosState('checking');
     setKronosMessage('');
@@ -198,6 +216,23 @@ function Dashboard() {
     } finally {
       setKronosBusy(false);
     }
+  };
+
+  const handleKronosImport = () => {
+    const consentKey = `floorly-import-consent:${selectedOrganizationId}:${PRIVACY_POLICY_VERSION}`;
+    if (selectedOrganizationId && localStorage.getItem(consentKey) !== 'accepted') {
+      setConsentChecked(false);
+      setConsentOpen(true);
+      return;
+    }
+    handleKronosImportWithConsent();
+  };
+
+  const acceptImportConsent = () => {
+    const consentKey = `floorly-import-consent:${selectedOrganizationId}:${PRIVACY_POLICY_VERSION}`;
+    localStorage.setItem(consentKey, 'accepted');
+    setConsentOpen(false);
+    handleKronosImportWithConsent();
   };
 
   const saveEmployeeMapping = async createFromProfile => {
@@ -363,6 +398,13 @@ function Dashboard() {
         onSave={() => saveEmployeeMapping(false)}
         onCreate={() => saveEmployeeMapping(true)}
         onClose={() => setEmployeeMapping(null)}
+      />
+      <ImportConsentModal
+        open={consentOpen}
+        checked={consentChecked}
+        onCheck={setConsentChecked}
+        onConfirm={acceptImportConsent}
+        onClose={() => setConsentOpen(false)}
       />
     </div>
   );

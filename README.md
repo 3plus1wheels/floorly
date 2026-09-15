@@ -54,26 +54,33 @@ Changing extension code requires `npm run extension:build`, then **Reload** on `
 
 ### Production / unlisted Chrome Web Store
 
+Production web origin is `https://floorly.vovanguyen.com`. Keep `DJANGO_ENV=production`, `DEBUG=False`, a random 50+ character `SECRET_KEY`, exact host/origin values, and HTTPS proxy settings in the deployment secret manager. Start from [.env.production.example](.env.production.example); never commit its replacements. Public liveness is `/health/`; `/ready/` checks database connectivity and returns 503 until database is usable.
+
 Build with exact deployed domains and bumped version:
 
 ```bash
-FLOORLY_WEB_ORIGINS=https://floorly.example.com \
-FLOORLY_API_ORIGINS=https://api.floorly.example.com \
+BUILD_MODE=production \
+FLOORLY_WEB_ORIGINS=https://floorly.vovanguyen.com \
+FLOORLY_API_ORIGINS=https://floorly.vovanguyen.com \
+KRONOS_ALLOWED_ORIGINS=https://levistrauss-sso.prd.mykronos.com \
+KRONOS_SCHEDULE_URL='https://levistrauss-sso.prd.mykronos.com/ess#/3009002/location-schedule' \
 EXTENSION_VERSION=1.0.1 \
 npm run extension:build
 ```
 
-Upload generated `extension/floorly-kronos-1.0.1.zip` as unlisted Chrome Web Store release. Manifest grants only Floorly, backend, and Kronos origins plus `tabs`; no cookies, history, or `<all_urls>` permission.
+Upload generated `extension/floorly-kronos-1.0.1.zip` as unlisted Chrome Web Store release. Manifest grants only exact Floorly, backend, and Kronos origins; no cookies, history, `<all_urls>`, or broad `tabs` permission.
 
 After Web Store assigns stable ID, set these Vercel build variables and redeploy frontend:
 
 ```env
 REACT_APP_FLOORLY_EXTENSION_ID=assigned_extension_id
 REACT_APP_FLOORLY_EXTENSION_STORE_URL=https://chromewebstore.google.com/detail/assigned_extension_id
-REACT_APP_API_BASE_URL=https://api.floorly.example.com
+REACT_APP_API_BASE_URL=
 ```
 
 Domain changes require new extension build/review because allowed origins are compiled into manifest. Full config examples: [.env.example](.env.example).
+
+Run `python manage.py purge_schedule_data` once per day from the production scheduler. Use `--dry-run` to verify the cutoff and `--organization-id` to scope an operational check. Shift records older than 12 months are deleted; encrypted database backups must expire within 30 days.
 
 If Compose warns that part of a secret “variable is not set,” single-quote that `.env` value; unquoted `$NAME` is Compose interpolation.
 

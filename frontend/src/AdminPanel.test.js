@@ -32,13 +32,22 @@ const visibleTeamNames = () => Array.from(document.querySelectorAll('.admin-empl
 
 describe('AdminPanel organization scope', () => {
   let fetchMock;
+  let kpiBatch;
 
   beforeEach(() => {
     localStorage.clear();
     localStorage.setItem('access_token', 'test-token');
+    kpiBatch = {
+      id: 41, current_fiscal_year: 2026, prior_fiscal_year: 2025, status: 'complete',
+      daily_records_imported: 728, period_records_imported: 24, warnings: ['Two future dates have no actual values.'],
+      imported_at: '2026-09-14T12:00:00Z',
+    };
     fetchMock = jest.spyOn(global, 'fetch').mockImplementation(async (url, options = {}) => {
       const path = new URL(String(url), 'http://localhost').pathname;
       const query = new URL(String(url), 'http://localhost').searchParams;
+      if (/\/api\/admin\/organizations\/\d+\/kpi-imports\/$/.test(path)) {
+        return options.method === 'POST' ? response(kpiBatch) : response([kpiBatch]);
+      }
       if (path === '/api/admin/organizations/' && options.method === 'POST') {
         return response({ id: 3, name: JSON.parse(options.body).name });
       }
@@ -102,5 +111,28 @@ describe('AdminPanel organization scope', () => {
     await userEvent.type(search, 'Bailey');
 
     expect(visibleTeamNames()).toEqual(['Bailey Jones']);
+  });
+
+  test('shows import metadata and uploads the selected organization’s two workbooks as multipart data', async () => {
+    render(<AdminPanel />);
+    expect(await screen.findByText('Two future dates have no actual values.')).toBeInTheDocument();
+    expect(screen.getByText('Current FY 2026')).toBeInTheDocument();
+    expect(screen.getByText('728 daily rows')).toBeInTheDocument();
+
+    const currentFile = new File(['current'], 'FY2026.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const priorFile = new File(['prior'], 'FY2025.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    fireEvent.change(screen.getByLabelText('Current fiscal year workbook'), { target: { files: [currentFile] } });
+    fireEvent.change(screen.getByLabelText('Prior fiscal year workbook'), { target: { files: [priorFile] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload both workbooks' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/admin/organizations/1/kpi-imports/'), expect.objectContaining({ method: 'POST' })));
+    const [url, options] = fetchMock.mock.calls.find(([requestUrl, requestOptions]) =>
+      String(requestUrl).includes('/kpi-imports/') && requestOptions?.method === 'POST');
+    expect(url).toContain('/organizations/1/');
+    expect(options.body.get('current_year_file')).toBe(currentFile);
+    expect(options.body.get('prior_year_file')).toBe(priorFile);
+    expect(options.headers).not.toHaveProperty('Content-Type');
+    expect(await screen.findByText('KPI workbooks imported. Workbook goals now use the refreshed data.')).toBeInTheDocument();
   });
 });

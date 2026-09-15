@@ -51,4 +51,5 @@ Thumbs.db
 node_modules/
 extension/dist/
 extension/floorly-kronos-*.zip
+extension/floorly-kronos-*.zip.sha256
 .env.compose

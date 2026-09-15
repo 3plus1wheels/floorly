@@ -405,7 +405,8 @@ function Footer() {
           <ul className="space-y-4 text-[#FAF8F5]/60 text-sm">
             <li><a href="#philosophy" className="hover:text-[#C9A84C] transition-colors">Philosophy</a></li>
             <li><Link to="/login" className="hover:text-[#C9A84C] transition-colors">Sign In</Link></li>
-            <li><a href="#philosophy" className="hover:text-[#C9A84C] transition-colors">Privacy Protocol</a></li>
+            <li><Link to="/privacy" className="hover:text-[#C9A84C] transition-colors">Privacy Policy</Link></li>
+            <li><Link to="/support" className="hover:text-[#C9A84C] transition-colors">Support</Link></li>
           </ul>
         </div>
       </div>

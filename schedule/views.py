@@ -8,10 +8,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from django.conf import settings
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
-from .models import Employee, Shift, StaffZone, ZONE_FIELDS
+from .models import Employee, KronosImportConsent, Shift, StaffZone, ZONE_FIELDS
 from .serializers import ShiftSerializer, EmployeeSerializer, StaffZoneSerializer
 from .authentication import ScheduleSyncAuthentication, ScheduleSyncToken
 from .identity import canonical_employee_name, default_workbook_name, workbook_name_parts, employee_summary, find_employee_by_name
@@ -19,6 +20,7 @@ from api.organization_context import organization_for_request
 from api.models import OrganizationMembership, UserProfile
 
 WORKBOOK_HOURS = list(range(8, 21))  # 8 am … 8-9 pm slot
+KRONOS_PRIVACY_POLICY_VERSION = '2026-09-15'
 
 WORKBOOK_COL_HEADERS = [
     '8am-9am','9am-10am','10am-11am','11am-12pm',
@@ -130,6 +132,7 @@ def _validate_sync_payload(payload):
     records = []
     starts = []
     occurrences = {}
+    total_shifts = 0
     for week_index, week in enumerate(weeks):
         if not isinstance(week, dict) or set(week) != {'week_start', 'week_end', 'shifts'}:
             raise PayloadError(f'weeks[{week_index}] must contain week_start, week_end, and shifts')
@@ -143,6 +146,9 @@ def _validate_sync_payload(payload):
         shifts = week['shifts']
         if not isinstance(shifts, list) or not shifts:
             raise PayloadError('each week must contain at least one shift')
+        total_shifts += len(shifts)
+        if total_shifts > 5000:
+            raise PayloadError('payload contains too many shifts')
         for shift_index, item in enumerate(shifts):
             if not isinstance(item, dict):
                 raise PayloadError('each shift must be an object')
@@ -399,12 +405,36 @@ class ScheduleSyncTicketView(APIView):
 
     def post(self, request):
         organization = organization_for_request(request)
+        consent = KronosImportConsent.objects.filter(
+            user=request.user,
+            organization=organization,
+            policy_version=KRONOS_PRIVACY_POLICY_VERSION,
+        ).first()
+        if consent is None:
+            if request.data.get('consent') is not True or request.data.get('privacy_policy_version') != KRONOS_PRIVACY_POLICY_VERSION:
+                return Response({
+                    'code': 'CONSENT_REQUIRED',
+                    'detail': 'Accept the current Kronos import privacy notice before importing.',
+                    'privacy_policy_version': KRONOS_PRIVACY_POLICY_VERSION,
+                    'privacy_policy_url': getattr(
+                        settings,
+                        'PRIVACY_POLICY_URL',
+                        'https://floorly.vovanguyen.com/privacy',
+                    ),
+                }, status=status.HTTP_403_FORBIDDEN)
+            consent, _ = KronosImportConsent.objects.update_or_create(
+                user=request.user,
+                organization=organization,
+                defaults={'policy_version': KRONOS_PRIVACY_POLICY_VERSION},
+            )
         token = ScheduleSyncToken.for_user(request.user)
         token['organization_id'] = organization.id
+        token['privacy_policy_version'] = consent.policy_version
         return Response({
             'ticket': str(token),
             'token_type': 'ScheduleSync',
             'expires_in': int(ScheduleSyncToken.lifetime.total_seconds()),
+            'privacy_policy_version': consent.policy_version,
         })
 
 
@@ -599,13 +629,111 @@ class WorkbookView(APIView):
                 'zones': zones,
             })
 
+        from .kpi_service import build_kpi_payload
         return Response({
             'day': day,
             'date': str(target_date),
             'hours': WORKBOOK_HOURS,
             'col_headers': WORKBOOK_COL_HEADERS,
             'rows': rows,
+            'kpi': build_kpi_payload(organization, target_date),
         })
+
+
+class KpiDayStateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _number(value, field):
+        from decimal import Decimal, InvalidOperation
+        if isinstance(value, bool) or value in (None, ''):
+            raise ValueError(f'{field} must be a number.')
+        try:
+            number = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError(f'{field} must be a number.') from exc
+        if not number.is_finite() or abs(number) > Decimal('1000000000000'):
+            raise ValueError(f'{field} is outside the supported range.')
+        return int(number) if number == number.to_integral_value() else float(number)
+
+    def patch(self, request, business_date):
+        from datetime import datetime
+        from django.db import transaction
+        from .kpi_service import GOAL_FIELDS, HOURLY_FIELDS, SEGMENT_HOURS, build_kpi_payload
+        from .models import KpiDayState
+
+        organization = organization_for_request(request)
+        try:
+            target_date = datetime.strptime(business_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        goal_updates = request.data.get('goal_updates', {})
+        goal_resets = request.data.get('goal_resets', [])
+        hourly_updates = request.data.get('hourly_updates', {})
+        if not isinstance(goal_updates, dict) or not isinstance(goal_resets, list) or not isinstance(hourly_updates, dict):
+            return Response({'error': 'Invalid KPI update payload.'}, status=status.HTTP_400_BAD_REQUEST)
+        if any(key not in GOAL_FIELDS for key in goal_updates) or any(key not in GOAL_FIELDS for key in goal_resets):
+            return Response({'error': 'Unknown goal field.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        clean_goals = {}
+        clean_hourly = {}
+        try:
+            for key, value in goal_updates.items():
+                clean_goals[key] = self._number(value, key)
+            for hour, values in hourly_updates.items():
+                if hour not in SEGMENT_HOURS or not isinstance(values, dict):
+                    raise ValueError('Unknown hourly segment.')
+                clean_hourly[hour] = {}
+                for key, value in values.items():
+                    if key not in HOURLY_FIELDS:
+                        raise ValueError('Unknown hourly KPI field.')
+                    if key == 'cel':
+                        if value is None or value == '':
+                            clean_hourly[hour][key] = None
+                            continue
+                        if not isinstance(value, str) or len(value.strip()) > 16 or any(ord(char) < 32 for char in value):
+                            raise ValueError('cel must be text up to 16 characters.')
+                        clean_hourly[hour][key] = value.strip()
+                    elif value is None or value == '':
+                        clean_hourly[hour][key] = None
+                    else:
+                        number = self._number(value, key)
+                        if key == 'pct' and not 0 <= number <= 100:
+                            raise ValueError('pct must be between 0 and 100.')
+                        if key in {'traffic', 'transactions'} and number < 0:
+                            raise ValueError(f'{key} cannot be negative.')
+                        clean_hourly[hour][key] = number
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            KpiDayState.objects.get_or_create(organization=organization, business_date=target_date)
+            state = KpiDayState.objects.select_for_update().get(
+                organization=organization, business_date=target_date,
+            )
+            goals = dict(state.goal_overrides or {})
+            hourly = dict(state.hourly_values or {})
+            for key in goal_resets:
+                goals.pop(key, None)
+            goals.update(clean_goals)
+            for hour, values in clean_hourly.items():
+                segment = dict(hourly.get(hour, {}))
+                for key, value in values.items():
+                    if value is None:
+                        segment.pop(key, None)
+                    else:
+                        segment[key] = value
+                if segment:
+                    hourly[hour] = segment
+                else:
+                    hourly.pop(hour, None)
+            state.goal_overrides = goals
+            state.hourly_values = hourly
+            state.revision += 1
+            state.last_edited_by = request.user
+            state.save(update_fields=['goal_overrides', 'hourly_values', 'revision', 'last_edited_by', 'updated_at'])
+        return Response(build_kpi_payload(organization, target_date))
 
 
 class StaffZoneView(APIView):

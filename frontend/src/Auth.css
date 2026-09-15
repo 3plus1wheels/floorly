@@ -114,7 +114,7 @@
   font-weight: 600;
 }
 
-button[type="submit"] {
+.auth-card button[type="submit"] {
   width: 100%;
   padding: 14px;
   border: 1px solid transparent;
@@ -128,12 +128,12 @@ button[type="submit"] {
   margin-top: 14px;
 }
 
-button[type="submit"]:hover:not(:disabled) {
+.auth-card button[type="submit"]:hover:not(:disabled) {
   background: #d4b65c;
   transform: translateY(-1px);
 }
 
-button[type="submit"]:disabled {
+.auth-card button[type="submit"]:disabled {
   opacity: 0.65;
   cursor: not-allowed;
 }
