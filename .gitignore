@@ -48,6 +48,7 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+.neon
 node_modules/
 extension/dist/
 extension/floorly-kronos-*.zip

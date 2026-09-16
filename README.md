@@ -1,17 +1,28 @@
 # Floorly
 
-React schedule workbook with Django/PostgreSQL backend. Kronos import runs from minimal Chrome extension against user’s already-authenticated Kronos tab. XLSX remains CLI recovery path.
+React schedule workbook with Django backend and Neon Postgres. Kronos import runs from minimal Chrome extension against user’s already-authenticated Kronos tab. XLSX remains CLI recovery path.
 
 ## First start
 
-Requirement: Docker Desktop.
+Requirements: Docker Desktop and a Neon project.
 
 ```bash
 cp .env.example .env
+# Add both connection strings from Neon's Connect dialog:
+# DATABASE_URL uses the pooled (-pooler) hostname.
+# DATABASE_URL_UNPOOLED uses the direct hostname.
 docker compose up --build
 ```
 
-Open <http://localhost:3000>. Backend health: <http://localhost:8000/health/>.
+Open <http://localhost:3000>. Backend health: <http://localhost:8000/health/>. Database readiness: <http://localhost:8000/ready/>.
+
+The backend uses `DATABASE_URL` for normal request traffic. Its startup script uses `DATABASE_URL_UNPOOLED` only while applying Django migrations, then starts Gunicorn with the pooled URL. Startup fails immediately if either value is missing.
+
+Optional: link the checkout to the same Neon project and pull branch-specific environment variables with the Neon CLI. `neon link` writes local project metadata to `.neon` and pulls the selected branch environment by default.
+
+```bash
+npx neon@latest link
+```
 
 Create first platform admin:
 
@@ -19,13 +30,11 @@ Create first platform admin:
 docker compose exec backend python manage.py createsuperuser
 ```
 
-Sign in, open **Admin**, create organization, then create users with temporary passwords. Users must change temporary password at first login. Database persists in `postgres-data` volume.
+Sign in, open **Admin**, create organization, then create users with temporary passwords. Users must change temporary password at first login. All database state persists in Neon; stopping or rebuilding Compose does not remove it.
 
 ```bash
 docker compose down
 ```
-
-`docker compose down --volumes` also erases local database.
 
 ## Kronos Chrome extension
 
@@ -54,7 +63,7 @@ Changing extension code requires `npm run extension:build`, then **Reload** on `
 
 ### Production / unlisted Chrome Web Store
 
-Production web origin is `https://floorly.vovanguyen.com`. Keep `DJANGO_ENV=production`, `DEBUG=False`, a random 50+ character `SECRET_KEY`, exact host/origin values, and HTTPS proxy settings in the deployment secret manager. Start from [.env.production.example](.env.production.example); never commit its replacements. Public liveness is `/health/`; `/ready/` checks database connectivity and returns 503 until database is usable.
+Production web origin is `https://floorly.vovanguyen.com`. Keep `DJANGO_ENV=production`, `DEBUG=False`, a random 50+ character `SECRET_KEY`, both Neon connection URLs, exact host/origin values, and HTTPS proxy settings in the deployment secret manager. Use the pooled Neon URL for `DATABASE_URL` and its matching direct URL for `DATABASE_URL_UNPOOLED`. Start from [.env.production.example](.env.production.example); never commit its replacements. Public liveness is `/health/`; `/ready/` checks Neon connectivity and returns 503 until the database is usable.
 
 Build with exact deployed domains and bumped version:
 
@@ -90,7 +99,13 @@ If Compose warns that part of a secret “variable is not set,” single-quote t
 npm test
 npm --prefix frontend test -- --watchAll=false
 npm --prefix frontend run build
-docker compose exec backend python manage.py test
+docker compose exec -e DATABASE_URL=sqlite:////tmp/floorly-tests.sqlite3 backend python manage.py test
+```
+
+CI runs Django tests with SQLite so tests never modify Neon. To use the same database isolation locally:
+
+```bash
+DATABASE_URL=sqlite:////tmp/floorly-tests.sqlite3 .venv/bin/python manage.py test
 ```
 
 Extension package smoke test:
@@ -112,5 +127,4 @@ Use `--clear` only when selected organization’s shifts should be removed first
 ## Containers
 
 - `frontend`: React build served by Nginx on port 3000; proxies `/api/` to Django.
-- `backend`: Django/Gunicorn on port 8000; applies migrations and collects static files on startup.
-- `db`: PostgreSQL 17 with persistent volume.
+- `backend`: Django/Gunicorn on port 8000; applies migrations through the direct Neon connection, then serves requests through the pooled Neon connection.
