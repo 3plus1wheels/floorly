@@ -127,8 +127,15 @@ function ImportConsentModal({ open, checked, onCheck, onConfirm, onClose }) {
   return <div className="settings-modal-backdrop" role="presentation" onClick={onClose}>
     <div className="settings-modal consent-modal" role="dialog" aria-modal="true" aria-labelledby="import-consent-title" onClick={event => event.stopPropagation()}>
       <div className="settings-modal-header"><h3 id="import-consent-title">Before importing from Kronos</h3><button className="settings-close-btn" onClick={onClose}>Close</button></div>
-      <p className="settings-help">Floorly will read schedule data visible in your authorized Kronos session and send it to Floorly for your selected organization.</p>
-      <ul className="consent-list"><li>Data: employee names, job roles, schedule dates and shift times, plus organization ID.</li><li>Purpose: build your Floorly workbook and floor-planning views.</li><li>Retention: shifts for 12 months; employee records until organization deletion; encrypted backups up to 30 days.</li></ul>
+      <p className="settings-help">Floorly will read only schedule content visible in your authorized Kronos session and send it to your selected Floorly organization.</p>
+      <p className="settings-help">A successful import replaces all shifts in the selected Monday–Sunday week. Shifts outside that week stay unchanged.</p>
+      <ul className="consent-list">
+        <li>Collected content: employee names, displayed job roles, schedule dates, shift times, selected week, and organization ID.</li>
+        <li>Not collected: Kronos usernames, passwords, passkeys, MFA codes, API keys, authentication cookies, or browsing history.</li>
+        <li>Authorization: a five-minute, one-use Floorly ticket is processed in memory and is not stored by the extension.</li>
+        <li>Purpose: build Floorly schedule, workbook, and floor-planning views.</li>
+        <li>Retention: shifts for 12 months; employee records until organization deletion; backup copies up to 30 days.</li>
+      </ul>
       <label className="consent-check"><input type="checkbox" checked={checked} onChange={event => onCheck(event.target.checked)} /><span>I understand and consent to this import under the <a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a> (version {PRIVACY_POLICY_VERSION}).</span></label>
       <div className="settings-actions-row"><button className="settings-save-btn" disabled={!checked} onClick={onConfirm}>Continue to import</button></div>
     </div>
@@ -183,7 +190,7 @@ function Dashboard() {
       });
       setWorkbookVersion(value => value + 1);
       setKronosState('complete');
-      setKronosMessage(`Kronos schedule imported for week ${selectedWeekStart}.`);
+      setKronosMessage(`Kronos schedule replaced for week ${selectedWeekStart}.`);
     } catch (error) {
       setKronosState(error.code === 'KRONOS_TAB_OPENED' ? 'opening' : 'failed');
       setShowExtensionLink(['EXTENSION_MISSING', 'EXTENSION_NOT_CONFIGURED'].includes(error.code));

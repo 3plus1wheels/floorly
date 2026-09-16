@@ -4,7 +4,7 @@
 
 - **Name:** Floorly Schedule Import
 - **Visibility:** Unlisted
-- **Category:** Productivity
+- **Category:** Workflow & Planning
 - **Website:** https://floorly.vovanguyen.com
 - **Privacy policy:** https://floorly.vovanguyen.com/privacy
 - **Support:** https://floorly.vovanguyen.com/support
@@ -33,7 +33,7 @@ Declare these handled data categories:
 
 - Personally identifiable information: employee names and job roles.
 - Website content: visible schedule dates and shift times.
-- Authentication information: transient five-minute Floorly import ticket; never stored by the extension.
+- Authentication information: the extension temporarily processes a five-minute, one-use Floorly import ticket solely to authorize the upload. This ticket is not a Kronos credential and is never stored by the extension.
 
 Certify that data is used only for the disclosed scheduling purpose, is not sold, is not used for advertising or credit decisions, and is transmitted over HTTPS.
 

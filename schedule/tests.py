@@ -10,6 +10,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from api.models import Organization, OrganizationMembership, UserProfile
 from .models import Employee, KronosImportConsent, Shift, StaffZone
 from .authentication import ScheduleSyncToken
+from .parsers import _normalize_role
 
 
 class ScheduleSyncTests(TestCase):
@@ -78,6 +79,27 @@ class ScheduleSyncTests(TestCase):
         self.assertEqual(response.data['range_start'], '2026-09-07')
         self.assertEqual(response.data['range_end'], '2026-09-13')
 
+    def test_exact_closing_shift_is_boh_even_when_kronos_sends_another_role(self):
+        self.payload['weeks'] = [{
+            **self.payload['weeks'][0],
+            'shifts': [{
+                **self.shift('Closing Stylist', '2026-09-07', role='CEL'),
+                'start_time': '16:30', 'end_time': '21:15',
+            }],
+        }]
+
+        response = self.post()
+
+        self.assertEqual(response.status_code, 200)
+        imported = Shift.objects.get(employee__name='Closing Stylist')
+        self.assertEqual(imported.role, 'BOH')
+
+    def test_exact_closing_shift_is_boh_even_when_xlsx_role_says_cel(self):
+        self.assertEqual(
+            _normalize_role('CEL', time(16, 30), time(21, 15), primary_job='Management'),
+            'BOH',
+        )
+
     def test_rejects_malformed_incomplete_and_empty_payloads(self):
         bad_payloads = [
             {},
@@ -144,6 +166,41 @@ class ScheduleSyncTests(TestCase):
         rows = {row['full_name']: row['name'] for row in response.data['rows']}
         self.assertEqual(rows, {'Nguyen, Vova': 'VOVA N', 'Smith, Vova': 'VOVA S'})
 
+    def test_stylist_zone_ties_keep_the_established_zone_across_the_shift(self):
+        alex = Employee.objects.create(organization=self.organization, name='Alex Nguyen')
+        blair = Employee.objects.create(organization=self.organization, name='Blair Smith')
+        Shift.objects.create(
+            employee=alex, date=date(2026, 9, 7), start_time=time(9), end_time=time(11), role='Stylist')
+        Shift.objects.create(
+            employee=blair, date=date(2026, 9, 7), start_time=time(10), end_time=time(11), role='Stylist')
+        StaffZone.objects.create(employee=alex, womens=2, mens=1, cash=3)
+        blair_zones = StaffZone.objects.create(employee=blair, womens=2, mens=1)
+
+        response = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        rows = {row['full_name']: row for row in response.data['rows']}
+        self.assertEqual(rows['Alex Nguyen']['zones']['9'], 'WOMENS')
+        self.assertEqual(rows['Alex Nguyen']['zones']['10'], 'WOMENS')
+
+        # A real skill advantage still outranks the continuity tiebreak.
+        blair_zones.womens = 3
+        blair_zones.save(update_fields=['womens'])
+        response = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        rows = {row['full_name']: row for row in response.data['rows']}
+        self.assertEqual(rows['Blair Smith']['zones']['10'], 'WOMENS')
+
+    def test_exact_closing_shift_stays_boh_despite_associate_role_override(self):
+        employee = Employee.objects.create(
+            organization=self.organization, name='Closing Associate', role_override='associate')
+        Shift.objects.create(
+            employee=employee, date=date(2026, 9, 7), start_time=time(16, 30),
+            end_time=time(21, 15), role='Stylist')
+
+        response = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['rows'][0]['role'], 'BOH')
+        self.assertEqual(set(response.data['rows'][0]['zones'].values()), {'BOH'})
+
     def test_explicit_workbook_name_is_uppercased_and_survives_schedule_sync(self):
         self.assertEqual(self.post().status_code, 200)
         employee = Employee.objects.get(name='Nguyen, Vova')
@@ -196,17 +253,55 @@ class ScheduleSyncTests(TestCase):
             reverse('staff_zone_update', args=[foreign_employee.id]),
             {'workbook_name': 'Foreign'}, format='json').status_code, 404)
 
+    def test_employee_remove_is_admin_only_scoped_and_cascades_roster_data(self):
+        employee = Employee.objects.create(organization=self.organization, name='Remove Me')
+        StaffZone.objects.create(employee=employee)
+        shift = Shift.objects.create(
+            employee=employee, date=date(2026, 9, 8), start_time=time(8), end_time=time(9), role='Stylist')
+        membership = OrganizationMembership.objects.get(user=self.user, organization=self.organization)
+        membership.employee = employee
+        membership.save(update_fields=['employee'])
+        url = reverse('staff_zone_update', args=[employee.id])
+
+        denied = self.client.delete(url)
+        self.assertEqual(denied.status_code, 403)
+        self.assertTrue(Employee.objects.filter(pk=employee.pk).exists())
+
+        self.authenticate_organization_admin()
+        self.client.credentials(HTTP_X_ORGANIZATION_ID=str(self.organization.id))
+        removed = self.client.delete(url)
+        self.assertEqual(removed.status_code, 204)
+        self.assertFalse(Employee.objects.filter(pk=employee.pk).exists())
+        self.assertFalse(StaffZone.objects.filter(employee_id=employee.pk).exists())
+        self.assertFalse(Shift.objects.filter(pk=shift.pk).exists())
+        membership.refresh_from_db()
+        self.assertIsNone(membership.employee_id)
+
+        other = Organization.objects.create(name='Other Organization')
+        foreign_employee = Employee.objects.create(organization=other, name='Foreign Employee')
+        not_found = self.client.delete(reverse('staff_zone_update', args=[foreign_employee.id]))
+        self.assertEqual(not_found.status_code, 404)
+        self.assertTrue(Employee.objects.filter(pk=foreign_employee.pk).exists())
+
     def test_replaces_only_covered_range(self):
         employee = Employee.objects.create(organization=self.organization, name='Old Person', primary_job='Old')
-        stale = Shift.objects.create(employee=employee, date=date(2026, 9, 8), start_time=time(8), end_time=time(9), role='Old')
+        stale = [
+            Shift.objects.create(employee=employee, date=stale_date, start_time=time(8), end_time=time(9), role='Old')
+            for stale_date in (date(2026, 9, 8), date(2026, 9, 13), date(2026, 9, 14), date(2026, 9, 20))
+        ]
         outside = Shift.objects.create(employee=employee, date=date(2026, 9, 21), start_time=time(8), end_time=time(9), role='Keep')
         response = self.post()
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data['ok'])
         self.assertEqual(response.data['shifts_created'], 2)
-        self.assertEqual(response.data['shifts_deleted'], 1)
-        self.assertFalse(Shift.objects.filter(pk=stale.pk).exists())
+        self.assertEqual(response.data['shifts_deleted'], len(stale))
+        self.assertFalse(Shift.objects.filter(pk__in=[shift.pk for shift in stale]).exists())
         self.assertTrue(Shift.objects.filter(pk=outside.pk).exists())
+        self.assertEqual(
+            set(Shift.objects.filter(date__range=(date(2026, 9, 7), date(2026, 9, 20)))
+                .values_list('employee__name', 'date', 'start_time')),
+            {('Nguyen, Vova', date(2026, 9, 7), time(9)), ('Smith, Alex', date(2026, 9, 20), time(9))},
+        )
         self.assertEqual(response.data['range_start'], '2026-09-07')
         self.assertEqual(response.data['range_end'], '2026-09-20')
         self.assertEqual(len(response.data['payload_hash']), 64)
@@ -416,7 +511,7 @@ class ScheduleSyncTicketSecurityTests(TestCase):
         self.consent = KronosImportConsent.objects.create(
             user=self.user,
             organization=self.organization,
-            policy_version='2026-09-15',
+            policy_version='2026-09-16',
         )
         self.sync_url = reverse('schedule_sync')
         self.ticket_url = reverse('schedule_sync_ticket')
@@ -464,7 +559,7 @@ class ScheduleSyncTicketSecurityTests(TestCase):
         self.assertEqual(token['token_type'], 'schedule_sync')
         self.assertEqual(token['user_id'], str(self.user.id))
         self.assertEqual(token['organization_id'], self.organization.id)
-        self.assertEqual(token['privacy_policy_version'], '2026-09-15')
+        self.assertEqual(token['privacy_policy_version'], '2026-09-16')
         self.assertEqual(token['exp'] - token['iat'], 300)
 
     def test_current_privacy_consent_is_required_and_can_be_recorded(self):
@@ -474,13 +569,13 @@ class ScheduleSyncTicketSecurityTests(TestCase):
         self.assertEqual(denied.data['code'], 'CONSENT_REQUIRED')
         accepted = self.client.post(self.ticket_url, {
             'consent': True,
-            'privacy_policy_version': '2026-09-15',
+            'privacy_policy_version': '2026-09-16',
         }, format='json', **self.access_headers())
         self.assertEqual(accepted.status_code, 200)
         self.assertTrue(KronosImportConsent.objects.filter(
             user=self.user,
             organization=self.organization,
-            policy_version='2026-09-15',
+            policy_version='2026-09-16',
         ).exists())
 
     def test_ticket_rejects_non_object_json(self):

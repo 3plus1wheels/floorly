@@ -2,7 +2,7 @@ import hashlib
 import json
 import threading
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -20,7 +20,8 @@ from api.organization_context import organization_for_request
 from api.models import OrganizationMembership, UserProfile
 
 WORKBOOK_HOURS = list(range(8, 21))  # 8 am … 8-9 pm slot
-KRONOS_PRIVACY_POLICY_VERSION = '2026-09-15'
+BOH_CLOSING_SHIFT = (time(16, 30), time(21, 15))
+KRONOS_PRIVACY_POLICY_VERSION = '2026-09-16'
 
 WORKBOOK_COL_HEADERS = [
     '8am-9am','9am-10am','10am-11am','11am-12pm',
@@ -169,6 +170,8 @@ def _validate_sync_payload(payload):
             end_time = _parse_hhmm(item['end_time'], 'end_time')
             if end_time <= start_time:
                 raise PayloadError('end_time must be after start_time')
+            if (start_time, end_time) == BOH_CLOSING_SHIFT:
+                role = 'BOH'
             key = (name.casefold(), shift_date, start_time)
             occurrence = occurrences.get(key, 0)
             occurrences[key] = occurrence + 1
@@ -495,7 +498,10 @@ class WorkbookView(APIView):
         shifts = list(shifts)  # evaluate queryset once
         role_overrides = {'associate': 'Stylist', 'management': 'CEL'}
         for shift in shifts:
-            shift.effective_role = role_overrides.get(shift.employee.role_override, shift.role)
+            if (shift.start_time, shift.end_time) == BOH_CLOSING_SHIFT:
+                shift.effective_role = 'BOH'
+            else:
+                shift.effective_role = role_overrides.get(shift.employee.role_override, shift.role)
         # Sort: non-BOH by start_time first, BOH shifts always last
         shifts.sort(key=lambda s: (1 if s.effective_role == 'BOH' else 0, s.start_time))
         from collections import Counter
@@ -508,7 +514,10 @@ class WorkbookView(APIView):
 
         # --- Zone assignment for Stylists ---
         # For each hour, rank available Stylists by skill level in each slot
-        # and greedily assign the best available person to each slot.
+        # and greedily assign the best available person to each slot. When
+        # skill levels tie, prefer an employee's established zone for this
+        # continuous work period, then their previous hour's zone. This keeps
+        # ties stable across the shift without overriding a real skill edge.
         emp_ids = [s.employee_id for s in shifts]
         staff_skill = {
             sz.employee_id: sz
@@ -522,6 +531,7 @@ class WorkbookView(APIView):
             return sum(getattr(sz, f, 0) or 0 for f in ZONE_FIELDS)
 
         hour_assignments = {}  # {h: {employee_id: zone_label_upper}}
+        shift_anchor_zones = {}  # {employee_id: zone_label_upper}, reset across gaps
         for h in WORKBOOK_HOURS:
             stylists_this_hour = [
                 s for s in shifts
@@ -529,6 +539,12 @@ class WorkbookView(APIView):
                 and (s.start_time.hour * 60 + s.start_time.minute) < (h + 1) * 60
                 and (s.end_time.hour   * 60 + s.end_time.minute)   > h * 60
             ]
+            active_ids = {s.employee_id for s in stylists_this_hour}
+            for employee_id in list(shift_anchor_zones):
+                if employee_id not in active_ids:
+                    del shift_anchor_zones[employee_id]
+
+            previous_assignments = hour_assignments.get(h - 1, {})
             available = list(stylists_this_hour)
             assigned  = {}
             for slot_zone in SLOT_SEQUENCE:
@@ -538,10 +554,13 @@ class WorkbookView(APIView):
                     available,
                     key=lambda s: (
                         getattr(staff_skill.get(s.employee_id), slot_zone, 0) or 0,
+                        shift_anchor_zones.get(s.employee_id) == slot_zone.upper(),
+                        previous_assignments.get(s.employee_id) == slot_zone.upper(),
                         -_skill_sum(s.employee_id),   # tiebreaker: smaller total sum wins
                     )
                 )
                 assigned[best.employee_id] = slot_zone.upper()
+                shift_anchor_zones.setdefault(best.employee_id, slot_zone.upper())
                 available.remove(best)
             for s in available:
                 assigned[s.employee_id] = 'STYLIST'
@@ -827,3 +846,13 @@ class StaffZoneView(APIView):
         if zone_updates:
             zone.save(update_fields=list(zone_updates))
         return Response(StaffZoneSerializer(zone).data)
+
+    def delete(self, request, employee_id):
+        if not request.user.is_staff:
+            return Response({'error': 'Only administrators may remove employees'}, status=status.HTTP_403_FORBIDDEN)
+        organization = organization_for_request(request)
+        employee = Employee.objects.filter(pk=employee_id, organization=organization).first()
+        if employee is None:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        employee.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

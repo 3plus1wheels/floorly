@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Building2, Check, ChevronDown, FileSpreadsheet, KeyRound, LoaderCircle, Pencil, Plus, Search, ShieldCheck, Upload, Users, X } from 'lucide-react';
+import { AlertTriangle, Building2, Check, ChevronDown, FileSpreadsheet, KeyRound, LoaderCircle, Pencil, Plus, Search, ShieldCheck, Trash2, Upload, Users, X } from 'lucide-react';
 import API_BASE from './config';
 import { useAuth } from './AuthContext';
 import './AdminPanel.css';
@@ -51,6 +51,7 @@ export default function AdminPanel({ onOrganizationsChanged }) {
   const [newOrganization, setNewOrganization] = useState('');
   const [newUser, setNewUser] = useState(emptyUser);
   const [editEmployee, setEditEmployee] = useState(null);
+  const [employeeToRemove, setEmployeeToRemove] = useState(null);
   const [editAccount, setEditAccount] = useState(null);
   const [resetAccount, setResetAccount] = useState(null);
   const [temporaryPassword, setTemporaryPassword] = useState('');
@@ -251,6 +252,21 @@ export default function AdminPanel({ onOrganizationsChanged }) {
     finally { setSaving(false); }
   };
 
+  const removeEmployee = async () => {
+    if (!selectedOrganization || !employeeToRemove) return;
+    setSaving(true); setError(''); setNotice('');
+    try {
+      await request(`/api/schedule/staff/${employeeToRemove.employee_id}/`, {
+        method: 'DELETE', headers: { 'X-Organization-ID': orgId(selectedOrganization.id) },
+      });
+      const removedName = employeeToRemove.name;
+      setEmployeeToRemove(null);
+      await refreshSelected();
+      setNotice(`${removedName} removed from this organization.`);
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  };
+
   const resetPassword = async event => {
     event.preventDefault();
     if (!resetAccount || !temporaryPassword) return;
@@ -337,7 +353,10 @@ export default function AdminPanel({ onOrganizationsChanged }) {
               <div className="admin-employee-meta"><span className={`admin-role-pill${employee.role_override === 'non_active' ? ' muted' : ''}`}>{employee.role_override ? ROLES.find(role => role.value === employee.role_override)?.label : 'Auto role'}</span>
                 {linkedEmployeeIds.has(employee.employee_id) && <span className="admin-linked"><ShieldCheck size={14} /> Account linked</span>}
               </div>
-              <button type="button" className="admin-icon-button" aria-label={`Edit ${employee.name}`} onClick={() => setEditEmployee({ ...employee })}><Pencil size={16} /></button>
+              <div className="admin-employee-actions">
+                <button type="button" className="admin-icon-button" aria-label={`Edit ${employee.name}`} onClick={() => setEditEmployee({ ...employee })}><Pencil size={16} /></button>
+                <button type="button" className="admin-icon-button admin-remove-employee-button" aria-label={`Remove ${employee.name}`} onClick={() => setEmployeeToRemove(employee)}><Trash2 size={16} /></button>
+              </div>
             </article>)}
           </div> : <div className="admin-inline-state"><Users size={18} /><div><strong>{search ? 'No matching staff' : 'No staff records yet'}</strong><span>{search ? 'Try a different name, workbook, or job.' : 'Import a schedule to populate this organization’s team.'}</span></div></div>}
         </>}
@@ -378,6 +397,11 @@ export default function AdminPanel({ onOrganizationsChanged }) {
       </div>}
       <form className="admin-new-org" onSubmit={createOrganization}><label htmlFor="admin-new-org">Create a separate organization</label><div className="admin-inline-form"><input id="admin-new-org" required placeholder="Organization name" value={newOrganization} onChange={event => setNewOrganization(event.target.value)} /><button className="admin-primary-button" type="submit" disabled={saving}><Plus size={16} /> Create organization</button></div></form>
     </section>
+
+    {employeeToRemove && <div className="admin-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setEmployeeToRemove(null); }}><section className="admin-modal small" role="alertdialog" aria-modal="true" aria-labelledby="remove-employee-title" aria-describedby="remove-employee-description"><div className="admin-modal-heading"><div><span className="admin-kicker">Remove team member</span><h3 id="remove-employee-title">Remove {employeeToRemove.name}?</h3></div><button type="button" className="admin-icon-button" aria-label="Close" onClick={() => setEmployeeToRemove(null)} disabled={saving}><X size={18} /></button></div>
+      <p className="admin-help" id="remove-employee-description">This permanently removes the employee, their scheduled shifts and zone skills from {selectedOrganization.name}. Any linked login will be unlinked.</p>
+      <div className="admin-modal-actions"><button type="button" onClick={() => setEmployeeToRemove(null)} disabled={saving}>Cancel</button><button type="button" className="admin-danger-button" onClick={removeEmployee} disabled={saving}>{saving ? 'Removing…' : 'Remove employee'}</button></div>
+    </section></div>}
 
     {editEmployee && <div className="admin-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setEditEmployee(null); }}><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="employee-dialog-title"><div className="admin-modal-heading"><div><span className="admin-kicker">Team profile</span><h3 id="employee-dialog-title">Edit {editEmployee.name}</h3></div><button type="button" className="admin-icon-button" aria-label="Close" onClick={() => setEditEmployee(null)}><X size={18} /></button></div>
       <form onSubmit={event => { event.preventDefault(); const changes = { workbook_name: editEmployee.workbook_name || '', role_override: editEmployee.role_override || '', ...Object.fromEntries(ZONES.map(([zone]) => [zone, Number(editEmployee[zone] ?? 0)])) }; updateEmployee(editEmployee, changes); }}>

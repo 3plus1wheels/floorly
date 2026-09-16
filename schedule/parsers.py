@@ -45,6 +45,8 @@ SUN_ONLY_BOH_TIMES: set[tuple] = {
 
 def _normalize_role(raw_role: str, start_t: time, end_t: time, day_label: str = '', primary_job: str = '') -> str:
     """Map a raw WFM role string + shift times to one of: Stylist | CEL | BOH."""
+    if (start_t, end_t) == (time(16, 30), time(21, 15)):
+        return "BOH"
     r = raw_role.lower()
     p = primary_job.lower()
     CEL_KEYWORDS = ("cel", "supervisor", "management")

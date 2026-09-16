@@ -37,6 +37,11 @@ describe('AdminPanel organization scope', () => {
   beforeEach(() => {
     localStorage.clear();
     localStorage.setItem('access_token', 'test-token');
+    employeeByOrganization[1] = [
+      { employee_id: 101, name: 'Alex Taylor', primary_job: 'Stylist' },
+      { employee_id: 102, name: 'Bailey Jones', primary_job: 'CEL' },
+    ];
+    employeeByOrganization[2] = [{ employee_id: 201, name: 'Casey Smith', primary_job: 'Stylist' }];
     kpiBatch = {
       id: 41, current_fiscal_year: 2026, prior_fiscal_year: 2025, status: 'complete',
       daily_records_imported: 728, period_records_imported: 24, warnings: ['Two future dates have no actual values.'],
@@ -56,6 +61,13 @@ describe('AdminPanel organization scope', () => {
       if (path === '/api/admin/users/') return response(userByOrganization[query.get('organization_id')] || []);
       if (path === '/api/schedule/staff/') {
         return response(employeeByOrganization[options.headers['X-Organization-ID']] || []);
+      }
+      if (/\/api\/schedule\/staff\/\d+\/$/.test(path) && options.method === 'DELETE') {
+        const organizationId = options.headers['X-Organization-ID'];
+        const employeeId = Number(path.split('/').at(-2));
+        employeeByOrganization[organizationId] = (employeeByOrganization[organizationId] || [])
+          .filter(employee => employee.employee_id !== employeeId);
+        return response({}, 204);
       }
       return response({});
     });
@@ -111,6 +123,28 @@ describe('AdminPanel organization scope', () => {
     await userEvent.type(search, 'Bailey');
 
     expect(visibleTeamNames()).toEqual(['Bailey Jones']);
+  });
+
+  test('requires confirmation before removing an employee and refreshes the roster', async () => {
+    render(<AdminPanel />);
+    await waitFor(() => expect(visibleTeamNames()).toEqual(['Alex Taylor', 'Bailey Jones']));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Alex Taylor' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('scheduled shifts and zone skills');
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('/api/schedule/staff/101/'), expect.objectContaining({ method: 'DELETE' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('/api/schedule/staff/101/'), expect.objectContaining({ method: 'DELETE' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Alex Taylor' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove employee' }));
+    await waitFor(() => expect(visibleTeamNames()).toEqual(['Bailey Jones']));
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/schedule/staff/101/'), expect.objectContaining({
+      method: 'DELETE', headers: expect.objectContaining({ 'X-Organization-ID': '1' }),
+    }));
+    expect(await screen.findByText('Alex Taylor removed from this organization.')).toBeInTheDocument();
   });
 
   test('shows import metadata and uploads the selected organization’s two workbooks as multipart data', async () => {
