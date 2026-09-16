@@ -52,6 +52,7 @@ PRIVACY_POLICY_URL = os.getenv('PRIVACY_POLICY_URL', 'https://floorly.vovanguyen
 # Reverse proxy/security controls. Production template enables these explicitly.
 USE_HTTPS = _env_bool('SECURE_SSL_REDIRECT', False)
 SECURE_SSL_REDIRECT = USE_HTTPS
+SECURE_REDIRECT_EXEMPT = [r'^health/$', r'^ready/$']
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https') if _env_bool('TRUST_PROXY_SSL_HEADER', False) else None
 SESSION_COOKIE_SECURE = _env_bool('SESSION_COOKIE_SECURE', USE_HTTPS)
 CSRF_COOKIE_SECURE = _env_bool('CSRF_COOKIE_SECURE', USE_HTTPS)

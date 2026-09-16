@@ -15,7 +15,7 @@ const snapshots = [{
   rows: [{ rowIndex: '0', employee_name: 'Doe, Jane', primary_job: 'Stylist', cells: [{ colId: 'mon', titles: ['9:00 AM - 5:00 PM'] }] }],
 }];
 
-function harness({ tabs = [{ id: 4, active: true, url: config.kronosScheduleUrl }], capture = { ok: true, snapshots }, response = { ok: true, status: 200, json: async () => ({ imported: 1 }) } } = {}) {
+function harness({ tabs = [{ id: 4, active: true, url: config.kronosScheduleUrl }], capture = { ok: true, snapshots }, response = { ok: true, status: 200, json: async () => ({ imported: 1 }) }, configuration = config } = {}) {
   const calls = { query: [], create: [], update: [], send: [], fetch: [] };
   const chromeApi = { tabs: {
     query: async value => (calls.query.push(value), tabs),
@@ -24,7 +24,7 @@ function harness({ tabs = [{ id: 4, active: true, url: config.kronosScheduleUrl 
     sendMessage: async (...value) => (calls.send.push(value), capture),
   } };
   const fetchImpl = async (...value) => (calls.fetch.push(value), response);
-  const run = createImporter({ chromeApi, fetchImpl, config, now: () => new Date('2026-09-08T18:00:00Z') });
+  const run = createImporter({ chromeApi, fetchImpl, config: configuration, now: () => new Date('2026-09-08T18:00:00Z') });
   return { calls, run };
 }
 
@@ -74,6 +74,14 @@ test('rejects unconfigured backend URL', async () => {
   assert.equal((await run({ ...message, sync_url: 'https://evil.example/api/schedule/kronos-sync/' }, sender)).code, 'INVALID_SYNC_URL');
   assert.equal((await run({ ...message, sync_url: 'https://api.floorly.example/proxy/api/schedule/kronos-sync/' }, sender)).code, 'INVALID_SYNC_URL');
   assert.equal(calls.query.length, 0);
+});
+
+test('allows exact configured localhost HTTP URL only for local development', async () => {
+  const localConfig = { ...config, webOrigins: ['http://localhost:3000'], apiOrigins: ['http://127.0.0.1:8000'] };
+  const localMessage = { ...message, sync_url: 'http://127.0.0.1:8000/api/schedule/kronos-sync/' };
+  const { calls, run } = harness({ configuration: localConfig });
+  assert.equal((await run(localMessage, { url: 'http://localhost:3000/' })).code, 'IMPORT_COMPLETE');
+  assert.equal(calls.fetch.length, 1);
 });
 
 test('rejects hostile Kronos tab URL', async () => {

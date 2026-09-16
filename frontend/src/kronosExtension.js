@@ -12,6 +12,7 @@ export const KRONOS_ERRORS = {
   GRID_UNAVAILABLE: 'Open My Location Schedule, wait for schedule rows, then click Import again.',
   SCHEDULE_NOT_READY: 'Open My Location Schedule, wait for schedule rows, then click Import again.',
   TICKET_EXPIRED: 'Import ticket expired. Click Import again.',
+  TICKET_REPLAYED: 'Import ticket was already used. Click Import again.',
   ORGANIZATION_DENIED: 'You no longer have access to this organization.',
   MEMBERSHIP_DENIED: 'You no longer have access to this organization.',
   EXTRACTION_FAILED: 'Could not read Kronos schedule. Confirm current week is visible, then retry.',

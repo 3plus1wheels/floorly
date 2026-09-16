@@ -12,7 +12,7 @@ from django.conf import settings
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
-from .models import Employee, KronosImportConsent, Shift, StaffZone, ZONE_FIELDS
+from .models import Employee, KronosImportConsent, ScheduleSyncTokenUse, Shift, StaffZone, ZONE_FIELDS
 from .serializers import ShiftSerializer, EmployeeSerializer, StaffZoneSerializer
 from .authentication import ScheduleSyncAuthentication, ScheduleSyncToken
 from .identity import canonical_employee_name, default_workbook_name, workbook_name_parts, employee_summary, find_employee_by_name
@@ -319,6 +319,21 @@ class ScheduleSyncView(APIView):
                 'detail': 'Choose your employee identity before importing My Schedule.',
             }, status=status.HTTP_409_CONFLICT)
 
+        token_jti = str(request.auth.get('jti') or '')
+        if not token_jti or len(token_jti) > 64:
+            return Response({'error': 'Schedule sync ticket has no valid identifier.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            ScheduleSyncTokenUse.objects.create(
+                jti=token_jti,
+                user=request.user,
+                organization=organization,
+            )
+        except IntegrityError:
+            return Response({
+                'code': 'TICKET_REPLAYED',
+                'detail': 'This schedule import ticket has already been used. Start the import again.',
+            }, status=status.HTTP_409_CONFLICT)
+
         lock = _sqlite_sync_lock if connection.vendor == 'sqlite' else None
         if lock:
             lock.acquire()
@@ -405,6 +420,11 @@ class ScheduleSyncTicketView(APIView):
 
     def post(self, request):
         organization = organization_for_request(request)
+        if not isinstance(request.data, dict):
+            return Response({
+                'code': 'INVALID_REQUEST',
+                'detail': 'Request body must be a JSON object.',
+            }, status=status.HTTP_400_BAD_REQUEST)
         consent = KronosImportConsent.objects.filter(
             user=request.user,
             organization=organization,

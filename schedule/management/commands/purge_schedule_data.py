@@ -1,10 +1,10 @@
-from datetime import date
+from datetime import date, timedelta
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from schedule.models import Shift
+from schedule.models import ScheduleSyncTokenUse, Shift
 
 
 def retention_cutoff(today):
@@ -35,13 +35,22 @@ class Command(BaseCommand):
         if options['organization_id'] is not None:
             shifts = shifts.filter(employee__organization_id=options['organization_id'])
         count = shifts.count()
+        expired_token_uses = ScheduleSyncTokenUse.objects.filter(
+            consumed_at__lt=timezone.now() - timedelta(days=1),
+        )
+        token_count = expired_token_uses.count()
 
         if options['dry_run']:
-            self.stdout.write(f'Would delete {count} shift record(s) before {cutoff.isoformat()}.')
+            self.stdout.write(
+                f'Would delete {count} shift record(s) before {cutoff.isoformat()} '
+                f'and {token_count} expired token-use record(s).'
+            )
             return
 
         with transaction.atomic():
             deleted, _ = shifts.delete()
+            deleted_token_uses, _ = expired_token_uses.delete()
         self.stdout.write(self.style.SUCCESS(
-            f'Deleted {deleted} shift record(s) before {cutoff.isoformat()}.'
+            f'Deleted {deleted} shift record(s) before {cutoff.isoformat()} '
+            f'and {deleted_token_uses} expired token-use record(s).'
         ))

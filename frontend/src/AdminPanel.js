@@ -299,7 +299,7 @@ export default function AdminPanel({ onOrganizationsChanged }) {
     {!selectedOrganization ? <section className="admin-empty"><Building2 /><h3>No organization yet</h3><p>Create an organization below to begin managing a team.</p></section> : <>
       <section className="admin-section admin-kpi-import-section">
         <div className="admin-section-heading"><div><span className="admin-kicker">Workbook data</span><h3><FileSpreadsheet size={19} /> KPI workbook import</h3><p>Upload both fiscal-year workbooks for {selectedOrganization.name}.</p></div></div>
-        <p className="admin-kpi-replacement-note">A valid import replaces this organization’s normalized KPI data for both years. Previous files are not retained; saved daily overrides stay in place.</p>
+        <p className="admin-kpi-replacement-note">A valid import replaces this organization’s normalized KPI data for both years. Original workbook files are not retained; filenames and import audit metadata remain. Saved daily overrides stay in place.</p>
         <form className="admin-kpi-upload-form" onSubmit={uploadKpiWorkbooks}>
           <label>Current fiscal year workbook (.xlsx)<input key={`current-${kpiFileInputKey}`} aria-label="Current fiscal year workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => setCurrentKpiFile(event.target.files?.[0] || null)} /></label>
           <label>Prior fiscal year workbook (.xlsx)<input key={`prior-${kpiFileInputKey}`} aria-label="Prior fiscal year workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => setPriorKpiFile(event.target.files?.[0] || null)} /></label>

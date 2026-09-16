@@ -22,7 +22,8 @@ export function createImporter({ chromeApi, fetchImpl, config, now = () => new D
     if (message?.type !== 'IMPORT_KRONOS_SCHEDULE' || !Number.isSafeInteger(organizationId) || organizationId <= 0 || typeof message.ticket !== 'string' || !message.ticket.trim() || message.ticket.length > LIMITS.maxTicketLength || !validMonday) return { ok: false, code: 'INVALID_REQUEST', error: 'Invalid import request.' };
     let syncUrl;
     try { syncUrl = new URL(message.sync_url); } catch { return { ok: false, code: 'INVALID_SYNC_URL', error: 'Invalid backend sync URL.' }; }
-    if (syncUrl.username || syncUrl.password || syncUrl.search || syncUrl.hash || syncUrl.protocol !== 'https:' || !config.apiOrigins.includes(syncUrl.origin) || syncUrl.pathname !== '/api/schedule/kronos-sync/') return { ok: false, code: 'INVALID_SYNC_URL', error: 'Backend sync URL is not allowed.' };
+    const localDevelopmentUrl = syncUrl.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(syncUrl.hostname);
+    if (syncUrl.username || syncUrl.password || syncUrl.search || syncUrl.hash || (syncUrl.protocol !== 'https:' && !localDevelopmentUrl) || !config.apiOrigins.includes(syncUrl.origin) || syncUrl.pathname !== '/api/schedule/kronos-sync/') return { ok: false, code: 'INVALID_SYNC_URL', error: 'Backend sync URL is not allowed.' };
 
     const kronosUrl = new URL(config.kronosScheduleUrl);
     const kronosOrigins = config.kronosOrigins?.length ? config.kronosOrigins : [kronosUrl.origin];

@@ -483,11 +483,22 @@ class ScheduleSyncTicketSecurityTests(TestCase):
             policy_version='2026-09-15',
         ).exists())
 
-    def test_ticket_sync_succeeds(self):
+    def test_ticket_rejects_non_object_json(self):
         response = self.client.post(
-            self.sync_url, self.payload, format='json', **self.sync_headers(self.issue_ticket()))
+            self.ticket_url, [], format='json', **self.access_headers())
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['code'], 'INVALID_REQUEST')
+
+    def test_ticket_sync_succeeds(self):
+        ticket = self.issue_ticket()
+        response = self.client.post(
+            self.sync_url, self.payload, format='json', **self.sync_headers(ticket))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['shifts_received'], 1)
+        replay = self.client.post(
+            self.sync_url, self.payload, format='json', **self.sync_headers(ticket))
+        self.assertEqual(replay.status_code, 409)
+        self.assertEqual(replay.data['code'], 'TICKET_REPLAYED')
 
     def test_access_token_cannot_call_sync_even_with_schedule_scheme(self):
         response = self.client.post(

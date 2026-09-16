@@ -86,6 +86,24 @@ class KronosImportConsent(models.Model):
         return f'{self.user_id} @ {self.organization_id} ({self.policy_version})'
 
 
+class ScheduleSyncTokenUse(models.Model):
+    jti = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='schedule_sync_token_uses',
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='schedule_sync_token_uses',
+    )
+    consumed_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.jti} ({self.organization_id})'
+
+
 class KpiImportBatch(models.Model):
     STATUS_COMPLETED = 'completed'
     STATUS_WARNINGS = 'warnings'
