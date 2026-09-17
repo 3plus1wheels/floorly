@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AdminPanel from './AdminPanel';
 
@@ -105,6 +105,7 @@ describe('AdminPanel organization scope', () => {
     await userEvent.type(screen.getByLabelText('Full name'), 'New South User');
     await userEvent.type(screen.getByLabelText('Username'), 'new-south-user');
     await userEvent.type(screen.getByLabelText('Temporary password'), 'Strong-Password-947!');
+    fireEvent.click(screen.getByRole('checkbox', { name: /Give admin permission/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -112,8 +113,23 @@ describe('AdminPanel organization scope', () => {
     const createCall = fetchMock.mock.calls.find(([url, options]) =>
       String(url).includes('/api/admin/users/') && options?.method === 'POST');
     expect(JSON.parse(createCall[1].body)).toMatchObject({
-      username: 'new-south-user', organization_ids: [2],
+      username: 'new-south-user', organization_ids: [2], is_admin: true,
     });
+  });
+
+  test('updates admin permission from the account edit dialog', async () => {
+    render(<AdminPanel />);
+    await waitFor(() => expect(visibleTeamNames()).toEqual(['Alex Taylor', 'Bailey Jones']));
+    fireEvent.click(screen.getByText('Access Accounts'));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('checkbox', { name: /Give admin permission/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/admin/users/11/'), expect.objectContaining({ method: 'PATCH' })));
+    const updateCall = fetchMock.mock.calls.find(([url, options]) =>
+      String(url).includes('/api/admin/users/11/') && options?.method === 'PATCH');
+    expect(JSON.parse(updateCall[1].body)).toMatchObject({ is_admin: true });
   });
 
   test('team search filters the currently selected organization', async () => {

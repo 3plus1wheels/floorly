@@ -11,6 +11,7 @@ from api.models import Organization, OrganizationMembership, UserProfile
 from .models import Employee, KronosImportConsent, Shift, StaffZone
 from .authentication import ScheduleSyncToken
 from .parsers import _normalize_role
+from .views import _build_interval_assignments
 
 
 class ScheduleSyncTests(TestCase):
@@ -166,7 +167,7 @@ class ScheduleSyncTests(TestCase):
         rows = {row['full_name']: row['name'] for row in response.data['rows']}
         self.assertEqual(rows, {'Nguyen, Vova': 'VOVA N', 'Smith, Vova': 'VOVA S'})
 
-    def test_stylist_zone_ties_keep_the_established_zone_across_the_shift(self):
+    def test_stylist_zone_stays_stable_when_a_stronger_newcomer_arrives(self):
         alex = Employee.objects.create(organization=self.organization, name='Alex Nguyen')
         blair = Employee.objects.create(organization=self.organization, name='Blair Smith')
         Shift.objects.create(
@@ -180,13 +181,164 @@ class ScheduleSyncTests(TestCase):
         rows = {row['full_name']: row for row in response.data['rows']}
         self.assertEqual(rows['Alex Nguyen']['zones']['9'], 'WOMENS')
         self.assertEqual(rows['Alex Nguyen']['zones']['10'], 'WOMENS')
+        self.assertEqual(rows['Blair Smith']['zones']['10'], 'MENS')
 
-        # A real skill advantage still outranks the continuity tiebreak.
+        # A stronger newcomer does not displace a valid continuing assignment.
         blair_zones.womens = 3
         blair_zones.save(update_fields=['womens'])
         response = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
         rows = {row['full_name']: row for row in response.data['rows']}
-        self.assertEqual(rows['Blair Smith']['zones']['10'], 'WOMENS')
+        self.assertEqual(rows['Alex Nguyen']['zones']['10'], 'WOMENS')
+        self.assertEqual(rows['Blair Smith']['zones']['10'], 'MENS')
+
+    def test_quarter_hour_arrivals_fill_new_slots_without_changing_api_shape(self):
+        starts = [time(10), time(10, 15), time(10, 30), time(10, 45)]
+        names = ['Alex', 'Blair', 'Casey', 'Drew']
+        skills = [
+            {'womens': 3},
+            {'mens': 3},
+            {'fits': 3},
+            {'cash': 3},
+        ]
+        for name, start_time, zone_skills in zip(names, starts, skills):
+            employee = Employee.objects.create(organization=self.organization, name=name)
+            Shift.objects.create(
+                employee=employee,
+                date=date(2026, 9, 7),
+                start_time=start_time,
+                end_time=time(11),
+                role='Stylist',
+            )
+            StaffZone.objects.create(employee=employee, **zone_skills)
+
+        response = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['hours'], list(range(8, 21)))
+        self.assertEqual(len(response.data['col_headers']), 13)
+        self.assertNotIn('intervals', response.data)
+        rows = {row['full_name']: row for row in response.data['rows']}
+        self.assertEqual(rows['Alex']['zones'], {'10': 'WOMENS'})
+        self.assertEqual(rows['Blair']['zones'], {'10': 'MENS'})
+        self.assertEqual(rows['Casey']['zones'], {'10': 'FITS'})
+        self.assertEqual(rows['Drew']['zones'], {'10': 'CASH'})
+
+        shifts = list(Shift.objects.filter(date=date(2026, 9, 7)).select_related('employee'))
+        for shift in shifts:
+            shift.effective_role = 'Stylist'
+        staff_skill = {
+            staff_zone.employee_id: staff_zone
+            for staff_zone in StaffZone.objects.filter(employee__organization=self.organization)
+        }
+        assignments = _build_interval_assignments(shifts, staff_skill, 10 * 60)
+        employee_ids = {shift.employee.name: shift.employee_id for shift in shifts}
+        for interval_start in (10 * 60, 10 * 60 + 15, 10 * 60 + 30):
+            self.assertEqual(assignments[interval_start][employee_ids['Alex']], 'WOMENS')
+            self.assertNotIn(employee_ids['Drew'], assignments[interval_start])
+        self.assertEqual(assignments[10 * 60 + 45][employee_ids['Drew']], 'CASH')
+
+    def test_hourly_cell_uses_first_worked_quarter_when_zone_changes(self):
+        employees = []
+        for name, zone_skills, end_time in (
+            ('Womens', {'womens': 3}, time(10, 15)),
+            ('Mens', {'mens': 3}, time(11)),
+            ('Fits', {'fits': 3}, time(11)),
+            ('Cash', {'cash': 3}, time(11)),
+        ):
+            employee = Employee.objects.create(organization=self.organization, name=name)
+            shift = Shift.objects.create(
+                employee=employee,
+                date=date(2026, 9, 7),
+                start_time=time(10),
+                end_time=end_time,
+                role='Stylist',
+            )
+            shift.effective_role = 'Stylist'
+            staff_zone = StaffZone.objects.create(employee=employee, **zone_skills)
+            employees.append((shift, staff_zone))
+
+        assignments = _build_interval_assignments(
+            [shift for shift, _ in employees],
+            {staff_zone.employee_id: staff_zone for _, staff_zone in employees},
+            10 * 60,
+        )
+        cash_employee_id = next(
+            shift.employee_id for shift, _ in employees if shift.employee.name == 'Cash'
+        )
+        self.assertEqual(assignments[10 * 60][cash_employee_id], 'CASH')
+        self.assertEqual(assignments[10 * 60 + 15][cash_employee_id], 'WOMENS')
+
+        response = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        rows = {row['full_name']: row for row in response.data['rows']}
+        self.assertEqual(rows['Cash']['zones']['10'], 'CASH')
+
+    def test_non_quarter_shift_uses_only_fully_covered_intervals(self):
+        employee = Employee.objects.create(organization=self.organization, name='Partial Shift')
+        shift = Shift.objects.create(
+            employee=employee,
+            date=date(2026, 9, 7),
+            start_time=time(10, 10),
+            end_time=time(10, 50),
+            role='Stylist',
+        )
+        shift.effective_role = 'Stylist'
+        staff_zone = StaffZone.objects.create(employee=employee, womens=3)
+
+        assignments = _build_interval_assignments([shift], {employee.id: staff_zone}, 10 * 60)
+
+        self.assertNotIn(employee.id, assignments[10 * 60])
+        self.assertEqual(assignments[10 * 60 + 15][employee.id], 'WOMENS')
+        self.assertEqual(assignments[10 * 60 + 30][employee.id], 'WOMENS')
+        self.assertNotIn(employee.id, assignments[10 * 60 + 45])
+
+    def test_cel_uses_eight_quarter_blocks_and_balances_minutes(self):
+        shifts = []
+        for name in ('Manager One', 'Manager Two'):
+            employee = Employee.objects.create(organization=self.organization, name=name)
+            shift = Shift.objects.create(
+                employee=employee,
+                date=date(2026, 9, 7),
+                start_time=time(10),
+                end_time=time(14),
+                role='CEL',
+            )
+            shift.effective_role = 'CEL'
+            shifts.append(shift)
+
+        assignments = _build_interval_assignments(shifts, {}, 10 * 60)
+        interval_starts = list(range(10 * 60, 14 * 60, 15))
+
+        for interval_start in interval_starts:
+            roles = [assignments[interval_start][shift.employee_id] for shift in shifts]
+            self.assertEqual(sorted(roles), ['CEL', 'FLEX'])
+
+        cel_sequences = [
+            [assignments[interval_start][shift.employee_id] for interval_start in interval_starts]
+            for shift in shifts
+        ]
+        self.assertEqual([sequence.count('CEL') for sequence in cel_sequences], [8, 8])
+        self.assertTrue(all(
+            sequence in (['CEL'] * 8 + ['FLEX'] * 8, ['FLEX'] * 8 + ['CEL'] * 8)
+            for sequence in cel_sequences
+        ))
+
+    def test_manager_quarters_switch_from_task_to_cel_at_open(self):
+        employee = Employee.objects.create(organization=self.organization, name='Opening Manager')
+        shift = Shift.objects.create(
+            employee=employee,
+            date=date(2026, 9, 7),
+            start_time=time(9, 15),
+            end_time=time(10, 15),
+            role='CEL',
+        )
+        shift.effective_role = 'CEL'
+
+        assignments = _build_interval_assignments([shift], {}, 10 * 60)
+
+        self.assertEqual(assignments[9 * 60 + 15][employee.id], 'TASK')
+        self.assertEqual(assignments[9 * 60 + 30][employee.id], 'TASK')
+        self.assertEqual(assignments[9 * 60 + 45][employee.id], 'TASK')
+        self.assertEqual(assignments[10 * 60][employee.id], 'CEL')
 
     def test_exact_closing_shift_stays_boh_despite_associate_role_override(self):
         employee = Employee.objects.create(

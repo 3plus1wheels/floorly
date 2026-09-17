@@ -100,7 +100,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
     organization_ids = serializers.PrimaryKeyRelatedField(source='organizations_input', queryset=Organization.objects.all(), many=True, write_only=True, required=False)
     organizations = serializers.SerializerMethodField(read_only=True)
     must_change_password = serializers.SerializerMethodField()
-    is_admin = serializers.BooleanField(source='is_staff', read_only=True)
+    is_admin = serializers.BooleanField(source='is_staff', required=False)
 
     class Meta:
         model = User
@@ -141,6 +141,8 @@ class AdminUserSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if self.instance and request and self.instance == request.user and attrs.get('is_active') is False:
             raise serializers.ValidationError({'is_active': 'You cannot deactivate your own account.'})
+        if self.instance and request and self.instance == request.user and attrs.get('is_staff') is False:
+            raise serializers.ValidationError({'is_admin': 'You cannot remove your own admin permission.'})
         return attrs
 
     @transaction.atomic

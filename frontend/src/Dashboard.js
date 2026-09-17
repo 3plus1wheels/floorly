@@ -361,7 +361,7 @@ function Dashboard() {
             {themeMessage}
           </div>
         )}
-        {kronosMessage && <div className="kronos-message">{kronosMessage}{showExtensionLink && EXTENSION_STORE_URL && <> <a href={EXTENSION_STORE_URL} target="_blank" rel="noreferrer">Install extension</a>.</>}</div>}
+        {kronosMessage && <div className="kronos-message">{kronosMessage}{showExtensionLink && EXTENSION_STORE_URL && <> <a href={EXTENSION_STORE_URL} target="_blank" rel="noopener noreferrer">Install extension here</a>.</>}</div>}
 
         <nav className="nav-tabs">
           <button

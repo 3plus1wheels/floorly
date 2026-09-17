@@ -14,7 +14,9 @@ function FloorlyLogo({ size = 'md', color = '#000', className = '' }) {
     <span
       className={className}
       style={{
-        display: 'inline-block',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '0.28em',
         color,
         fontFamily: 'Inter, sans-serif',
         fontWeight: 900,
@@ -25,7 +27,32 @@ function FloorlyLogo({ size = 'md', color = '#000', className = '' }) {
       }}
       aria-label="Floorly logo"
     >
-      Floorly.
+      <span
+        aria-hidden="true"
+        style={{
+          position: 'relative',
+          flex: '0 0 auto',
+          width: '1.18em',
+          height: '1.18em',
+          overflow: 'hidden',
+        }}
+      >
+        <img
+          src="/floorly-logo-revised.png"
+          alt=""
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            width: '180%',
+            height: '180%',
+            maxWidth: 'none',
+            objectFit: 'contain',
+            transform: 'translate(-50%, -50%)',
+          }}
+        />
+      </span>
+      <span>Floorly.</span>
     </span>
   );
 }

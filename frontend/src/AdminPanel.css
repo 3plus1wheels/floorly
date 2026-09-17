@@ -85,6 +85,12 @@
 .admin-form-grid label, .admin-modal-stack label, .admin-modal-field, .admin-org-actions label, .admin-new-org label { display: grid; gap: 6px; color: var(--color-text); font-size: 11px; font-weight: 650; }
 .admin-form-grid input, .admin-modal input, .admin-modal select, .admin-org-actions input, .admin-new-org input, .admin-account-link select, .admin-modal-field input, .admin-modal-field select { min-width: 0; height: 36px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 7px; outline: none; color: var(--color-text); background: var(--color-background); font-size: 12px; font-weight: 400; }
 .admin-form-grid input:focus, .admin-modal input:focus, .admin-modal select:focus, .admin-org-actions input:focus, .admin-new-org input:focus, .admin-account-link select:focus { border-color: var(--admin-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--admin-accent) 13%, transparent); }
+.admin-permission-check, .admin-modal-stack .admin-permission-check { display: flex; align-items: flex-start; gap: 9px; width: fit-content; margin: 0 0 13px; cursor: pointer; }
+.admin-permission-check input, .admin-modal .admin-permission-check input { flex: 0 0 auto; width: 16px; min-width: 16px; height: 16px; margin: 1px 0 0; padding: 0; accent-color: var(--admin-accent); box-shadow: none; }
+.admin-permission-check input:disabled { cursor: not-allowed; }
+.admin-permission-check span { display: grid; gap: 2px; }
+.admin-permission-check strong { color: var(--color-text); font-size: 11px; }
+.admin-permission-check small { color: var(--color-muted); font-size: 10px; font-weight: 400; line-height: 1.4; }
 .admin-optional { color: var(--color-muted); font-weight: 400; }
 .admin-primary-button, .admin-danger-button, .admin-inline-form button, .admin-account-actions button, .admin-modal-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 11px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text); background: var(--color-card); font-size: 11px; font-weight: 650; white-space: nowrap; }
 .admin-primary-button { color: white; border-color: var(--admin-accent); background: var(--admin-accent); }

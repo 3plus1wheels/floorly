@@ -80,6 +80,32 @@ class AdminApiTests(APITestCase):
         self.assertEqual(user.profile.full_name, 'New User')
         self.assertEqual(set(user.organization_memberships.values_list('organization_id', flat=True)), {first.id, second.id})
 
+    def test_admin_can_grant_admin_permission_when_provisioning_user(self):
+        organization = Organization.objects.create(name='Admin Store')
+        response = self.client.post('/api/admin/users/', {
+            'username': 'new-admin', 'full_name': 'New Administrator',
+            'temporary_password': 'Temporary-Password-427!',
+            'organization_ids': [organization.id], 'is_admin': True,
+        }, format='json')
+        self.assertEqual(response.status_code, 201)
+        user = User.objects.get(username='new-admin')
+        self.assertTrue(user.is_staff)
+        self.assertTrue(response.data['is_admin'])
+
+    def test_admin_can_update_another_users_admin_permission(self):
+        response = self.client.patch(
+            f'/api/admin/users/{self.member.id}/', {'is_admin': True}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.member.refresh_from_db()
+        self.assertTrue(self.member.is_staff)
+
+    def test_admin_cannot_remove_own_admin_permission(self):
+        response = self.client.patch(
+            f'/api/admin/users/{self.admin.id}/', {'is_admin': False}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.is_staff)
+
     def test_admin_user_list_can_filter_by_organization_id(self):
         first = Organization.objects.create(name='First Store')
         second = Organization.objects.create(name='Second Store')

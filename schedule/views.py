@@ -2,6 +2,7 @@ import hashlib
 import json
 import threading
 import unicodedata
+from collections import Counter
 from datetime import date, datetime, time, timedelta
 
 from rest_framework.views import APIView
@@ -20,6 +21,13 @@ from api.organization_context import organization_for_request
 from api.models import OrganizationMembership, UserProfile
 
 WORKBOOK_HOURS = list(range(8, 21))  # 8 am … 8-9 pm slot
+WORKBOOK_INTERVAL_MINUTES = 15
+WORKBOOK_INTERVAL_STARTS = tuple(range(
+    WORKBOOK_HOURS[0] * 60,
+    (WORKBOOK_HOURS[-1] + 1) * 60,
+    WORKBOOK_INTERVAL_MINUTES,
+))
+CEL_BLOCK_INTERVALS = 120 // WORKBOOK_INTERVAL_MINUTES
 BOH_CLOSING_SHIFT = (time(16, 30), time(21, 15))
 KRONOS_PRIVACY_POLICY_VERSION = '2026-09-16'
 
@@ -29,12 +37,164 @@ WORKBOOK_COL_HEADERS = [
     '4pm-5pm','5pm-6pm','6pm-7pm','7pm-8pm','8pm-9pm',
 ]
 
-# Zone assignment order for Stylists each hour.
-# Slots are filled left-to-right; each Stylist is used at most once per hour.
+# Zone assignment order for Stylists in each interval.
+# Slots are filled left-to-right; each Stylist is used at most once per interval.
 SLOT_SEQUENCE = ['womens', 'mens', 'fits', 'cash', 'fits', 'mens', 'womens', 'greet', 'mens', 'womens']
 
 # Main zones that managers can plug when stylists don't fill them
 MAIN_ZONE_SLOTS = ['womens', 'mens', 'fits', 'cash']
+
+
+def _time_minutes(value):
+    return value.hour * 60 + value.minute
+
+
+def _shift_covers_interval(shift, interval_start):
+    """Return True only when the shift covers the complete 15-minute interval."""
+    return (
+        _time_minutes(shift.start_time) <= interval_start
+        and _time_minutes(shift.end_time) >= interval_start + WORKBOOK_INTERVAL_MINUTES
+    )
+
+
+def _build_interval_assignments(shifts, staff_skill, store_open_minute):
+    """Build internal quarter-hour assignments without changing the hourly API."""
+    interval_assignments = {}
+    shift_anchor_zones = {}
+
+    def skill(employee_id, zone):
+        return getattr(staff_skill.get(employee_id), zone, 0) or 0
+
+    def skill_sum(employee_id):
+        staff_zone = staff_skill.get(employee_id)
+        if not staff_zone:
+            return 0
+        return sum(getattr(staff_zone, field, 0) or 0 for field in ZONE_FIELDS)
+
+    # Assign Stylists chronologically. First lock valid continuing assignments,
+    # then fill any newly opened slots by skill using the existing tie-breakers.
+    for interval_start in WORKBOOK_INTERVAL_STARTS:
+        stylists = [
+            shift for shift in shifts
+            if shift.effective_role == 'Stylist'
+            and _shift_covers_interval(shift, interval_start)
+        ]
+        active_ids = {shift.employee_id for shift in stylists}
+        for employee_id in list(shift_anchor_zones):
+            if employee_id not in active_ids:
+                del shift_anchor_zones[employee_id]
+
+        previous = interval_assignments.get(interval_start - WORKBOOK_INTERVAL_MINUTES, {})
+        open_slots = list(SLOT_SEQUENCE[:min(len(stylists), len(SLOT_SEQUENCE))])
+        available = list(stylists)
+        assigned = {}
+
+        # Preserve a preceding-quarter zone while it is still required and the
+        # employee has a non-zero skill level for it. Duplicate slots retain
+        # only as many continuing employees as the interval still needs.
+        for slot_zone in dict.fromkeys(open_slots):
+            capacity = open_slots.count(slot_zone)
+            continuing = [
+                shift for shift in available
+                if previous.get(shift.employee_id) == slot_zone.upper()
+                and skill(shift.employee_id, slot_zone) > 0
+            ]
+            continuing.sort(
+                key=lambda shift: (
+                    skill(shift.employee_id, slot_zone),
+                    shift_anchor_zones.get(shift.employee_id) == slot_zone.upper(),
+                    -skill_sum(shift.employee_id),
+                    -shift.employee_id,
+                ),
+                reverse=True,
+            )
+            for continuing_shift in continuing[:capacity]:
+                employee_id = continuing_shift.employee_id
+                assigned[employee_id] = slot_zone.upper()
+                shift_anchor_zones.setdefault(employee_id, slot_zone.upper())
+                available.remove(continuing_shift)
+                open_slots.remove(slot_zone)
+
+        for slot_zone in open_slots:
+            if not available:
+                break
+            best = max(
+                available,
+                key=lambda shift: (
+                    skill(shift.employee_id, slot_zone),
+                    shift_anchor_zones.get(shift.employee_id) == slot_zone.upper(),
+                    previous.get(shift.employee_id) == slot_zone.upper(),
+                    -skill_sum(shift.employee_id),
+                    -shift.employee_id,
+                ),
+            )
+            assigned[best.employee_id] = slot_zone.upper()
+            shift_anchor_zones.setdefault(best.employee_id, slot_zone.upper())
+            available.remove(best)
+
+        for shift in available:
+            assigned[shift.employee_id] = 'STYLIST'
+        interval_assignments[interval_start] = assigned
+
+    # Schedule managers right-to-left as before, but measure both contiguous
+    # CEL blocks and total workload in quarter-hours/minutes.
+    cel_consecutive = {}
+    cel_total_minutes = {}
+    all_manager_ids = {shift.employee_id for shift in shifts if shift.effective_role == 'CEL'}
+
+    for interval_start in reversed(WORKBOOK_INTERVAL_STARTS):
+        managers = [
+            shift for shift in shifts
+            if shift.effective_role == 'CEL'
+            and _shift_covers_interval(shift, interval_start)
+        ]
+        working_manager_ids = {manager.employee_id for manager in managers}
+        for employee_id in all_manager_ids:
+            if employee_id not in working_manager_ids:
+                cel_consecutive[employee_id] = 0
+
+        if not managers:
+            continue
+
+        if interval_start < store_open_minute:
+            for manager in managers:
+                interval_assignments[interval_start][manager.employee_id] = 'TASK'
+            continue
+
+        for manager in managers:
+            cel_consecutive.setdefault(manager.employee_id, 0)
+            cel_total_minutes.setdefault(manager.employee_id, 0)
+
+        def cel_priority(manager):
+            employee_id = manager.employee_id
+            consecutive = cel_consecutive.get(employee_id, 0)
+            total_minutes = cel_total_minutes.get(employee_id, 0)
+            in_block = 1 if 0 < consecutive < CEL_BLOCK_INTERVALS else 0
+            under_limit = 1 if (consecutive < CEL_BLOCK_INTERVALS or len(managers) == 1) else 0
+            return (
+                in_block,
+                under_limit,
+                -total_minutes,
+                _time_minutes(manager.end_time),
+                -employee_id,
+            )
+
+        cel_pick = max(managers, key=cel_priority)
+        cel_employee_id = cel_pick.employee_id
+        interval_assignments[interval_start][cel_employee_id] = 'CEL'
+        cel_consecutive[cel_employee_id] = cel_consecutive.get(cel_employee_id, 0) + 1
+        cel_total_minutes[cel_employee_id] = (
+            cel_total_minutes.get(cel_employee_id, 0) + WORKBOOK_INTERVAL_MINUTES
+        )
+
+        for manager in managers:
+            employee_id = manager.employee_id
+            if employee_id == cel_employee_id:
+                continue
+            interval_assignments[interval_start][employee_id] = 'FLEX'
+            cel_consecutive[employee_id] = 0
+
+    return interval_assignments
 
 
 class ShiftListView(APIView):
@@ -504,7 +664,6 @@ class WorkbookView(APIView):
                 shift.effective_role = role_overrides.get(shift.employee.role_override, shift.role)
         # Sort: non-BOH by start_time first, BOH shifts always last
         shifts.sort(key=lambda s: (1 if s.effective_role == 'BOH' else 0, s.start_time))
-        from collections import Counter
         distinct_employees = {shift.employee_id: shift.employee for shift in shifts}
         default_name_counts = Counter(
             default_workbook_name(employee.name)
@@ -512,125 +671,19 @@ class WorkbookView(APIView):
             if not employee.workbook_name
         )
 
-        # --- Zone assignment for Stylists ---
-        # For each hour, rank available Stylists by skill level in each slot
-        # and greedily assign the best available person to each slot. When
-        # skill levels tie, prefer an employee's established zone for this
-        # continuous work period, then their previous hour's zone. This keeps
-        # ties stable across the shift without overriding a real skill edge.
+        # Build precise quarter-hour assignments internally. The response is
+        # collapsed back to its existing hourly shape below.
         emp_ids = [s.employee_id for s in shifts]
         staff_skill = {
             sz.employee_id: sz
             for sz in StaffZone.objects.filter(employee_id__in=emp_ids)
         }
-
-        def _skill_sum(employee_id):
-            sz = staff_skill.get(employee_id)
-            if not sz:
-                return 0
-            return sum(getattr(sz, f, 0) or 0 for f in ZONE_FIELDS)
-
-        hour_assignments = {}  # {h: {employee_id: zone_label_upper}}
-        shift_anchor_zones = {}  # {employee_id: zone_label_upper}, reset across gaps
-        for h in WORKBOOK_HOURS:
-            stylists_this_hour = [
-                s for s in shifts
-                if s.effective_role == 'Stylist'
-                and (s.start_time.hour * 60 + s.start_time.minute) < (h + 1) * 60
-                and (s.end_time.hour   * 60 + s.end_time.minute)   > h * 60
-            ]
-            active_ids = {s.employee_id for s in stylists_this_hour}
-            for employee_id in list(shift_anchor_zones):
-                if employee_id not in active_ids:
-                    del shift_anchor_zones[employee_id]
-
-            previous_assignments = hour_assignments.get(h - 1, {})
-            available = list(stylists_this_hour)
-            assigned  = {}
-            for slot_zone in SLOT_SEQUENCE:
-                if not available:
-                    break
-                best = max(
-                    available,
-                    key=lambda s: (
-                        getattr(staff_skill.get(s.employee_id), slot_zone, 0) or 0,
-                        shift_anchor_zones.get(s.employee_id) == slot_zone.upper(),
-                        previous_assignments.get(s.employee_id) == slot_zone.upper(),
-                        -_skill_sum(s.employee_id),   # tiebreaker: smaller total sum wins
-                    )
-                )
-                assigned[best.employee_id] = slot_zone.upper()
-                shift_anchor_zones.setdefault(best.employee_id, slot_zone.upper())
-                available.remove(best)
-            for s in available:
-                assigned[s.employee_id] = 'STYLIST'
-            hour_assignments[h] = assigned
-
-        # --- Manager (CEL) zone assignment ---
-        # Process hours right-to-left.
-        # Exactly ONE manager gets CEL per hour; the rest get FLEX.
-        # Spread CEL evenly: prefer the manager with fewest consecutive CEL hours,
-        # then fewest total CEL hours, then latest end_time as tiebreaker.
-        cel_consecutive = {}   # {employee_id: int} resets when not working or assigned FLEX
-        cel_total       = {}   # {employee_id: int} cumulative CEL hours
-        all_mgr_ids = {s.employee_id for s in shifts if s.effective_role == 'CEL'}
-
-        # Store opens at 11am Sunday, 10am every other day
-        store_open_hour = 11 if day == 'Sun' else 10
-
-        for h in reversed(WORKBOOK_HOURS):
-            managers_this_hour = [
-                s for s in shifts
-                if s.effective_role == 'CEL'
-                and (s.start_time.hour * 60 + s.start_time.minute) < (h + 1) * 60
-                and (s.end_time.hour   * 60 + s.end_time.minute)   > h * 60
-            ]
-
-            # Reset consecutive count for managers not on shift this hour
-            working_mgr_ids = {m.employee_id for m in managers_this_hour}
-            for eid in all_mgr_ids:
-                if eid not in working_mgr_ids:
-                    cel_consecutive[eid] = 0
-
-            available_mgrs = list(managers_this_hour)
-            if not available_mgrs:
-                continue
-
-            # Before store opens → all managers on TASK
-            if h < store_open_hour:
-                for mgr in available_mgrs:
-                    hour_assignments[h][mgr.employee_id] = 'TASK'
-                continue
-
-            for m in available_mgrs:
-                cel_consecutive.setdefault(m.employee_id, 0)
-                cel_total.setdefault(m.employee_id, 0)
-
-            # Step 1: pick ONE manager for CEL (always, every hour)
-            def _cel_priority(m):
-                eid = m.employee_id
-                consec = cel_consecutive.get(eid, 0)
-                total  = cel_total.get(eid, 0)
-                # Force continuation if mid-segment (consec==1, hasn't finished min 2-hour block)
-                in_segment  = 1 if consec == 1 else 0
-                # Then prefer those under the 2-consecutive cap (or solo manager)
-                under_limit = 1 if (consec < 2 or len(available_mgrs) == 1) else 0
-                # Fewest total CEL for even spread; latest end_time as tiebreaker
-                return (in_segment, under_limit, -total, -(m.end_time.hour * 60 + m.end_time.minute))
-
-            cel_pick = max(available_mgrs, key=_cel_priority)
-            cel_eid  = cel_pick.employee_id
-            hour_assignments[h][cel_eid] = 'CEL'
-            cel_consecutive[cel_eid] = cel_consecutive.get(cel_eid, 0) + 1
-            cel_total[cel_eid]       = cel_total.get(cel_eid, 0) + 1
-
-            remaining_mgrs = [m for m in available_mgrs if m.employee_id != cel_eid]
-
-            # All non-CEL managers get FLEX
-            for mgr in remaining_mgrs:
-                eid = mgr.employee_id
-                hour_assignments[h][eid] = 'FLEX'
-                cel_consecutive[eid] = 0
+        store_open_minute = (11 if day == 'Sun' else 10) * 60
+        interval_assignments = _build_interval_assignments(
+            shifts,
+            staff_skill,
+            store_open_minute,
+        )
 
         rows = []
         for shift in shifts:
@@ -638,16 +691,21 @@ class WorkbookView(APIView):
             eh, em = shift.end_time.hour, shift.end_time.minute
             shift_label = f"{_fmt(sh, sm)}-{_fmt(eh, em)}"
 
-            start_min = sh * 60 + sm
-            end_min   = eh * 60 + em
-
             zones = {}
             for h in WORKBOOK_HOURS:
-                if start_min < (h + 1) * 60 and end_min > h * 60:
+                # Preserve the existing hourly response by using the first
+                # complete quarter of this shift within the hour.
+                for interval_start in range(h * 60, (h + 1) * 60, WORKBOOK_INTERVAL_MINUTES):
+                    if not _shift_covers_interval(shift, interval_start):
+                        continue
                     if shift.effective_role == 'BOH':
                         zones[str(h)] = 'BOH'
                     else:
-                        zones[str(h)] = hour_assignments.get(h, {}).get(shift.employee_id, shift.effective_role.upper())
+                        zones[str(h)] = interval_assignments.get(interval_start, {}).get(
+                            shift.employee_id,
+                            shift.effective_role.upper(),
+                        )
+                    break
 
             raw = shift.employee.name
             employee = shift.employee
