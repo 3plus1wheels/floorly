@@ -44,7 +44,7 @@ WORKBOOK_COL_HEADERS = [
 # Slots are filled left-to-right; each Stylist is used at most once per interval.
 SLOT_SEQUENCE = [
     'womens', 'mens', 'fits', 'cash', 'fits', 'mens',
-    'womens', 'greet', 'mens', 'womens', 'cash',
+    'womens', 'greet', 'mens', 'womens', 'cash', 'fits',
 ]
 
 # Main zones that managers can plug when stylists don't fill them
@@ -93,6 +93,69 @@ def _ensure_slot_counts(base_slots, required_counts):
     return slots
 
 
+def _maximum_weight_assignment(weights):
+    """Assign every row to a unique column in polynomial time (Hungarian algorithm)."""
+    row_count = len(weights)
+    if not row_count:
+        return []
+    column_count = len(weights[0])
+    if row_count > column_count:
+        raise ValueError('Assignment requires at least as many employees as slots.')
+
+    maximum = max(max(row) for row in weights)
+    costs = [[maximum - value for value in row] for row in weights]
+    row_potential = [0] * (row_count + 1)
+    column_potential = [0] * (column_count + 1)
+    matched_row = [0] * (column_count + 1)
+    path = [0] * (column_count + 1)
+
+    for row in range(1, row_count + 1):
+        matched_row[0] = row
+        minimum = [None] * (column_count + 1)
+        used = [False] * (column_count + 1)
+        column = 0
+        while True:
+            used[column] = True
+            current_row = matched_row[column]
+            delta = None
+            next_column = 0
+            for candidate_column in range(1, column_count + 1):
+                if used[candidate_column]:
+                    continue
+                reduced_cost = (
+                    costs[current_row - 1][candidate_column - 1]
+                    - row_potential[current_row]
+                    - column_potential[candidate_column]
+                )
+                if minimum[candidate_column] is None or reduced_cost < minimum[candidate_column]:
+                    minimum[candidate_column] = reduced_cost
+                    path[candidate_column] = column
+                if delta is None or minimum[candidate_column] < delta:
+                    delta = minimum[candidate_column]
+                    next_column = candidate_column
+            for candidate_column in range(column_count + 1):
+                if used[candidate_column]:
+                    row_potential[matched_row[candidate_column]] += delta
+                    column_potential[candidate_column] -= delta
+                elif candidate_column:
+                    minimum[candidate_column] -= delta
+            column = next_column
+            if matched_row[column] == 0:
+                break
+        while True:
+            previous_column = path[column]
+            matched_row[column] = matched_row[previous_column]
+            column = previous_column
+            if column == 0:
+                break
+
+    assignment = [-1] * row_count
+    for column in range(1, column_count + 1):
+        if matched_row[column]:
+            assignment[matched_row[column] - 1] = column - 1
+    return assignment
+
+
 def _build_interval_assignments(shifts, staff_skill, store_open_minute, slot_sequence=None):
     """Build internal quarter-hour assignments without changing the hourly API."""
     interval_assignments = {}
@@ -112,78 +175,102 @@ def _build_interval_assignments(shifts, staff_skill, store_open_minute, slot_seq
         value = getattr(staff_skill.get(employee_id), 'preferred_zone', '') or ''
         return value if value in ZONE_FIELDS else ''
 
-    def add_scores(left, right):
-        return tuple(a + b for a, b in zip(left, right))
-
     def match_slots(stylists, slots, previous):
-        """Globally match employees to the bounded demand slots using bitmask DP."""
+        """Globally match employees and slots while preserving score precedence."""
         ordered_staff = sorted(stylists, key=lambda shift: shift.employee_id)
         slot_count = len(slots)
-        score_size = 3 + (slot_count * 3)
-        empty_score = (0,) * score_size
-        # mask -> (score, picks); picks are slot indexes in ordered_staff order.
-        states = {0: (empty_score, ())}
+        employee_count = len(ordered_staff)
+        max_other_skill = 3 * len(ZONE_FIELDS)
+        dimension_bounds = (
+            [1, slot_count + 1, slot_count + 1]
+            + ([4] * slot_count)
+            + ([2] * slot_count)
+            + ([max_other_skill + 1] * slot_count)
+            + ([employee_count + 1] * slot_count)
+        )
 
-        def is_better(candidate, current):
-            if current is None:
-                return True
-            candidate_score, candidate_picks = candidate
-            current_score, current_picks = current
-            if candidate_score != current_score:
-                return candidate_score > current_score
-            candidate_key = tuple(
-                slot_count - pick if pick >= 0 else 0 for pick in candidate_picks
-            )
-            current_key = tuple(
-                slot_count - pick if pick >= 0 else 0 for pick in current_picks
-            )
-            return candidate_key > current_key
+        def encode(digits):
+            value = 0
+            for digit, bound in zip(digits, dimension_bounds):
+                value = (value * bound) + digit
+            return value
 
-        for shift in ordered_staff:
-            employee_id = shift.employee_id
-            next_states = {}
-            for mask, (current_score, current_picks) in states.items():
-                skipped = (current_score, current_picks + (-1,))
-                if is_better(skipped, next_states.get(mask)):
-                    next_states[mask] = skipped
-
+        weights = []
+        for slot_index, zone in enumerate(slots):
+            row = []
+            for employee_index, shift in enumerate(ordered_staff):
+                employee_id = shift.employee_id
+                zone_skill = skill(employee_id, zone)
                 total_skill = skill_sum(employee_id)
-                preference = preferred_zone(employee_id)
-                for slot_index, zone in enumerate(slots):
-                    bit = 1 << slot_index
-                    if mask & bit:
-                        continue
-                    zone_skill = skill(employee_id, zone)
-                    contribution = [0] * score_size
-                    contribution[0] = int(
-                        zone_skill > 0 and previous.get(employee_id) == zone.upper()
-                    )
-                    contribution[1] = int(zone_skill > 0)
-                    contribution[2] = int(preference == zone)
-                    contribution[3 + slot_index] = zone_skill
-                    contribution[3 + slot_count + slot_index] = int(
-                        shift_anchor_zones.get(employee_id) == zone.upper()
-                    )
-                    contribution[3 + (slot_count * 2) + slot_index] = -(
-                        total_skill - zone_skill
-                    )
-                    candidate = (
-                        add_scores(current_score, tuple(contribution)),
-                        current_picks + (slot_index,),
-                    )
-                    next_mask = mask | bit
-                    if is_better(candidate, next_states.get(next_mask)):
-                        next_states[next_mask] = candidate
-            states = next_states
+                digits = [
+                    int(zone_skill > 0 and previous.get(employee_id) == zone.upper()),
+                    int(zone_skill > 0),
+                    int(preferred_zone(employee_id) == zone),
+                ]
+                skill_digits = [0] * slot_count
+                anchor_digits = [0] * slot_count
+                specialist_digits = [0] * slot_count
+                employee_digits = [0] * slot_count
+                skill_digits[slot_index] = zone_skill
+                anchor_digits[slot_index] = int(
+                    shift_anchor_zones.get(employee_id) == zone.upper()
+                )
+                specialist_digits[slot_index] = max_other_skill - (total_skill - zone_skill)
+                employee_digits[slot_index] = employee_count - employee_index
+                digits.extend(skill_digits)
+                digits.extend(anchor_digits)
+                digits.extend(specialist_digits)
+                digits.extend(employee_digits)
+                row.append(encode(digits))
+            weights.append(row)
 
-        full_mask = (1 << slot_count) - 1
-        score, picks = states[full_mask]
+        employee_indexes = _maximum_weight_assignment(weights)
+        matched = [
+            (slot_index, employee_index, slots[slot_index])
+            for slot_index, employee_index in enumerate(employee_indexes)
+        ]
         assignments = {
-            shift.employee_id: slots[pick]
-            for shift, pick in zip(ordered_staff, picks)
-            if pick >= 0
+            ordered_staff[employee_index].employee_id: zone
+            for _, employee_index, zone in matched
         }
-        tie_key = tuple(slot_count - pick if pick >= 0 else 0 for pick in picks)
+        continuity = sum(
+            int(
+                skill(ordered_staff[employee_index].employee_id, zone) > 0
+                and previous.get(ordered_staff[employee_index].employee_id) == zone.upper()
+            )
+            for _, employee_index, zone in matched
+        )
+        trained = sum(
+            int(skill(ordered_staff[employee_index].employee_id, zone) > 0)
+            for _, employee_index, zone in matched
+        )
+        preferences = sum(
+            int(preferred_zone(ordered_staff[employee_index].employee_id) == zone)
+            for _, employee_index, zone in matched
+        )
+        skill_scores = tuple(
+            skill(ordered_staff[employee_index].employee_id, zone)
+            for _, employee_index, zone in matched
+        )
+        anchor_scores = tuple(
+            int(shift_anchor_zones.get(ordered_staff[employee_index].employee_id) == zone.upper())
+            for _, employee_index, zone in matched
+        )
+        specialist_scores = tuple(
+            -(
+                skill_sum(ordered_staff[employee_index].employee_id)
+                - skill(ordered_staff[employee_index].employee_id, zone)
+            )
+            for _, employee_index, zone in matched
+        )
+        score = (
+            continuity, trained, preferences,
+            *skill_scores, *anchor_scores, *specialist_scores,
+        )
+        tie_key = tuple(
+            -ordered_staff[employee_index].employee_id
+            for _, employee_index, _ in matched
+        )
         return score, tie_key, assignments
 
     # Assign Stylists chronologically. Slot configurations preserve valid

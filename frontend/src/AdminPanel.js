@@ -19,10 +19,12 @@ const ROLES = [
   { value: 'non_active', label: 'Non-active' },
 ];
 const DEFAULT_BOH_SHIFT_TIMES = [{ start: '14:00', end: '18:45' }, { start: '16:30', end: '21:15' }];
-const DEFAULT_ZONE_PRIORITY = ['WOMENS', 'MENS', 'FITS', 'CASH', 'FITS', 'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH'];
+const DEFAULT_ZONE_PRIORITY = ['WOMENS', 'MENS', 'FITS', 'CASH', 'FITS', 'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH', 'FITS'];
 const ZONE_COLORS = {
   WOMENS: '#e91e63', MENS: '#1976d2', FITS: '#7b1fa2', CASH: '#00897b', GREET: '#f57c00',
 };
+const PRIORITY_ZONE_OPTIONS = ['WOMENS', 'MENS', 'FITS', 'CASH', 'GREET'];
+const MAX_PRIORITY_SLOTS = 20;
 const emptyUser = { full_name: '', username: '', email: '', temporary_password: '', is_admin: false };
 const orgId = value => value == null ? '' : String(value);
 
@@ -78,6 +80,16 @@ function priorityCards(zones) {
   });
 }
 
+function nextPriorityCardId(cards, zone) {
+  const prefix = `${zone.toLowerCase()}-`;
+  const highest = cards.reduce((maximum, card) => {
+    if (!card.id.startsWith(prefix)) return maximum;
+    const suffix = Number(card.id.slice(prefix.length));
+    return Number.isFinite(suffix) ? Math.max(maximum, suffix) : maximum;
+  }, 0);
+  return `${prefix}${highest + 1}`;
+}
+
 function SortableZoneCard({ card, position, onKeyboardMove }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id });
   return <li
@@ -114,6 +126,7 @@ function FloorMapRules({ organization, saving, onSave }) {
   const initialPriority = organization.zone_priority || DEFAULT_ZONE_PRIORITY;
   const [bohTimes, setBohTimes] = useState(() => initialBoh.map(rule => ({ ...rule })));
   const [cards, setCards] = useState(() => priorityCards(initialPriority));
+  const [selectedPriorityZone, setSelectedPriorityZone] = useState('WOMENS');
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -141,6 +154,23 @@ function FloorMapRules({ organization, saving, onSave }) {
     const to = Math.max(0, Math.min(current.length - 1, from + delta));
     return from === to ? current : arrayMove(current, from, to);
   });
+  const addPrioritySlot = () => setCards(current => (
+    current.length >= MAX_PRIORITY_SLOTS
+      ? current
+      : [...current, { id: nextPriorityCardId(current, selectedPriorityZone), zone: selectedPriorityZone }]
+  ));
+  const removePrioritySlot = () => setCards(current => {
+    if (current.length <= 1) return current;
+    let removeIndex = -1;
+    for (let index = current.length - 1; index >= 0; index -= 1) {
+      if (current[index].zone === selectedPriorityZone) {
+        removeIndex = index;
+        break;
+      }
+    }
+    return removeIndex < 0 ? current : current.filter((_, index) => index !== removeIndex);
+  });
+  const selectedZoneCount = cards.filter(card => card.zone === selectedPriorityZone).length;
 
   return <CollapsibleSection
     className="admin-floor-rules-section"
@@ -165,7 +195,7 @@ function FloorMapRules({ organization, saving, onSave }) {
           {invalid && <p className="admin-rule-error" role="alert">Each rule needs a unique start time earlier than its end time.</p>}
         </div>
         <div className="admin-priority-rules">
-          <div className="admin-rules-subheading"><div><h4><GripVertical size={16} /> Stylist zone priority</h4><p>Drag all eleven demand slots into the order they should fill.</p></div></div>
+          <div className="admin-rules-subheading"><div><h4><GripVertical size={16} /> Stylist zone priority</h4><p>Drag all twelve demand slots into the order they should fill.</p></div></div>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={cards.map(card => card.id)} strategy={verticalListSortingStrategy}>
               <ol className="admin-zone-priority-list">
@@ -173,6 +203,31 @@ function FloorMapRules({ organization, saving, onSave }) {
               </ol>
             </SortableContext>
           </DndContext>
+          <div className="admin-priority-slot-controls">
+            <label>
+              Zone
+              <select
+                aria-label="Zone slot"
+                value={selectedPriorityZone}
+                onChange={event => setSelectedPriorityZone(event.target.value)}
+              >
+                {PRIORITY_ZONE_OPTIONS.map(zone => <option key={zone} value={zone}>{zone}</option>)}
+              </select>
+            </label>
+            <div className="admin-priority-slot-buttons">
+              <button type="button" onClick={addPrioritySlot} disabled={cards.length >= MAX_PRIORITY_SLOTS}>
+                <Plus size={14} /> Add slot
+              </button>
+              <button
+                type="button"
+                onClick={removePrioritySlot}
+                disabled={cards.length <= 1 || selectedZoneCount === 0}
+              >
+                <Trash2 size={14} /> Remove slot
+              </button>
+            </div>
+            <span>{cards.length} / {MAX_PRIORITY_SLOTS} slots · {selectedPriorityZone} appears {selectedZoneCount} {selectedZoneCount === 1 ? 'time' : 'times'}</span>
+          </div>
         </div>
       </div>
       <div className="admin-rules-actions"><span>{dirty ? 'Unsaved floor map changes' : 'Floor map rules are up to date'}</span><button type="submit" className="admin-primary-button" disabled={saving || invalid || !dirty}>{saving ? 'Saving…' : 'Save floor map rules'}</button></div>

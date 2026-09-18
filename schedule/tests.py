@@ -1,3 +1,4 @@
+from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
 from unittest.mock import patch
 
@@ -360,6 +361,48 @@ class ScheduleSyncTests(TestCase):
         self.assertEqual(assignments[first.id], 'MENS')
         self.assertEqual(assignments[second.id], 'GREET')
 
+    def test_short_priority_list_leaves_overflow_stylists_unzoned(self):
+        shifts = []
+        skills = {}
+        for index in range(4):
+            employee = Employee.objects.create(
+                organization=self.organization, name=f'Short List {index}')
+            shift = Shift.objects.create(
+                employee=employee, date=date(2026, 9, 7), start_time=time(10),
+                end_time=time(11), role='Stylist')
+            shift.effective_role = 'Stylist'
+            shifts.append(shift)
+            skills[employee.id] = StaffZone.objects.create(
+                employee=employee, womens=3, cash=3)
+
+        assignments = _build_interval_assignments(
+            shifts, skills, 10 * 60, ['womens', 'cash'])
+        zones = list(assignments[10 * 60].values())
+
+        self.assertEqual(sorted(zone for zone in zones if zone != 'STYLIST'), ['CASH', 'WOMENS'])
+        self.assertEqual(zones.count('STYLIST'), 2)
+
+    def test_twenty_priority_slots_match_twenty_active_stylists(self):
+        slot_sequence = ['womens', 'mens', 'fits', 'cash', 'greet'] * 4
+        shifts = []
+        skills = {}
+        for index, zone in enumerate(slot_sequence):
+            employee = Employee.objects.create(
+                organization=self.organization, name=f'Large Team {index:02d}')
+            shift = Shift.objects.create(
+                employee=employee, date=date(2026, 9, 7), start_time=time(10),
+                end_time=time(11), role='Stylist')
+            shift.effective_role = 'Stylist'
+            shifts.append(shift)
+            skills[employee.id] = StaffZone.objects.create(employee=employee, **{zone: 3})
+
+        assignments = _build_interval_assignments(
+            shifts, skills, 10 * 60, slot_sequence)[10 * 60]
+
+        self.assertEqual(len(assignments), 20)
+        self.assertNotIn('STYLIST', assignments.values())
+        self.assertEqual(Counter(assignments.values()), Counter(zone.upper() for zone in slot_sequence))
+
     def test_quarter_hour_arrivals_fill_new_slots_without_changing_api_shape(self):
         starts = [time(10), time(10, 15), time(10, 30), time(10, 45)]
         names = ['Alex', 'Blair', 'Casey', 'Drew']
@@ -566,7 +609,7 @@ class ScheduleSyncTests(TestCase):
     def test_custom_zone_priority_changes_first_stylist_slot(self):
         self.organization.zone_priority = [
             'CASH', 'MENS', 'FITS', 'WOMENS', 'FITS',
-            'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH',
+            'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH', 'FITS',
         ]
         self.organization.save(update_fields=['zone_priority'])
         employee = Employee.objects.create(organization=self.organization, name='Cash First')

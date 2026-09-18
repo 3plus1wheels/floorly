@@ -7,7 +7,7 @@ jest.mock('./AuthContext', () => ({
 }));
 
 const defaultBohTimes = [{ start: '14:00', end: '18:45' }, { start: '16:30', end: '21:15' }];
-const defaultPriority = ['WOMENS', 'MENS', 'FITS', 'CASH', 'FITS', 'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH'];
+const defaultPriority = ['WOMENS', 'MENS', 'FITS', 'CASH', 'FITS', 'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH', 'FITS'];
 const organizations = [
   { id: 1, name: 'North Store', is_active: true, boh_shift_times: defaultBohTimes, zone_priority: defaultPriority },
   { id: 2, name: 'South Store', is_active: true, boh_shift_times: defaultBohTimes, zone_priority: defaultPriority },
@@ -218,8 +218,9 @@ describe('AdminPanel organization scope', () => {
   test('supports keyboard reordering of duplicate-aware priority cards', async () => {
     render(<AdminPanel />);
     await openSection('Floor map rules');
-    expect(screen.getAllByRole('button', { name: /Move .* priority/ })).toHaveLength(11);
-    expect(screen.getAllByText('CASH')).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /Move .* priority/ })).toHaveLength(12);
+    expect(screen.getAllByRole('button', { name: /Move CASH priority/ })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /Move FITS priority/ })).toHaveLength(3);
     const firstHandle = await screen.findByRole('button', { name: 'Move WOMENS priority 1' });
 
     fireEvent.keyDown(firstHandle, { key: 'ArrowDown', code: 'ArrowDown', altKey: true });
@@ -233,6 +234,54 @@ describe('AdminPanel organization scope', () => {
       expect(saveCall).toBeTruthy();
       expect(JSON.parse(saveCall[1].body).zone_priority.slice(0, 3)).toEqual(['MENS', 'WOMENS', 'FITS']);
     });
+  });
+
+  test('adds and removes the selected zone slot before saving the draft', async () => {
+    render(<AdminPanel />);
+    await openSection('Floor map rules');
+    const picker = screen.getByLabelText('Zone slot');
+
+    fireEvent.change(picker, { target: { value: 'CASH' } });
+    expect(screen.getByText('12 / 20 slots · CASH appears 2 times')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add slot' }));
+    expect(screen.getByText('13 / 20 slots · CASH appears 3 times')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Move .* priority/ })).toHaveLength(13);
+
+    fireEvent.change(picker, { target: { value: 'GREET' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove slot' }));
+    expect(screen.getByText('12 / 20 slots · GREET appears 0 times')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save floor map rules' }));
+
+    await waitFor(() => {
+      const saveCall = fetchMock.mock.calls.find(([url, options]) =>
+        String(url).includes('/api/admin/organizations/1/')
+        && options?.method === 'PATCH'
+        && JSON.parse(options.body).zone_priority?.length === 12
+        && JSON.parse(options.body).zone_priority?.at(-1) === 'CASH');
+      expect(saveCall).toBeTruthy();
+      expect(JSON.parse(saveCall[1].body).zone_priority.filter(zone => zone === 'CASH')).toHaveLength(3);
+      expect(JSON.parse(saveCall[1].body).zone_priority).not.toContain('GREET');
+    });
+  });
+
+  test('enforces the one-to-twenty slot boundaries', async () => {
+    render(<AdminPanel />);
+    await openSection('Floor map rules');
+    const picker = screen.getByLabelText('Zone slot');
+    const remove = screen.getByRole('button', { name: 'Remove slot' });
+    const add = screen.getByRole('button', { name: 'Add slot' });
+
+    for (const [zone, removals] of [['WOMENS', 3], ['MENS', 3], ['FITS', 3], ['CASH', 2]]) {
+      fireEvent.change(picker, { target: { value: zone } });
+      for (let index = 0; index < removals; index += 1) fireEvent.click(remove);
+    }
+    expect(screen.getByText('1 / 20 slots · CASH appears 0 times')).toBeInTheDocument();
+    fireEvent.change(picker, { target: { value: 'GREET' } });
+    expect(remove).toBeDisabled();
+
+    for (let index = 0; index < 19; index += 1) fireEvent.click(add);
+    expect(screen.getByText('20 / 20 slots · GREET appears 20 times')).toBeInTheDocument();
+    expect(add).toBeDisabled();
   });
 
   test('requires confirmation before removing an employee and refreshes the roster', async () => {

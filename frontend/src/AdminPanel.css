@@ -185,6 +185,13 @@
 .admin-panel .admin-drag-handle svg { display: block; margin: auto; }
 .admin-panel .admin-drag-handle:hover, .admin-panel .admin-drag-handle:focus-visible { color: var(--admin-accent); background: var(--admin-accent-soft); outline: none; transform: none; }
 .admin-drag-handle:active { cursor: grabbing; }
+.admin-priority-slot-controls { display: grid; grid-template-columns: minmax(110px, .75fr) auto; align-items: end; gap: 8px 10px; margin-top: 10px; padding: 10px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-card); }
+.admin-priority-slot-controls label { display: grid; gap: 4px; color: var(--color-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.admin-priority-slot-controls select { width: 100%; height: 32px; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text); background: var(--color-background); font-size: 11px; }
+.admin-priority-slot-buttons { display: flex; align-items: center; gap: 6px; }
+.admin-panel .admin-priority-slot-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; margin: 0; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text); background: var(--color-background); font-size: 10px; font-weight: 700; line-height: 1; transform: none; }
+.admin-panel .admin-priority-slot-buttons button:hover { border-color: color-mix(in srgb, var(--admin-accent) 45%, var(--color-border)); background: var(--admin-accent-soft); transform: none; }
+.admin-priority-slot-controls > span { grid-column: 1 / -1; color: var(--color-muted); font-size: 9px; }
 .admin-rules-actions { display: flex; justify-content: flex-end; align-items: center; gap: 13px; padding-top: 2px; }
 .admin-rules-actions span { color: var(--color-muted); font-size: 10px; }
 
@@ -225,6 +232,9 @@
   .admin-kpi-upload-form { grid-template-columns: 1fr; }
   .admin-kpi-upload-form .admin-primary-button { justify-self: start; }
   .admin-boh-time-row { grid-template-columns: 20px minmax(82px, 1fr) 10px minmax(82px, 1fr) 30px; padding: 7px 5px; }
+  .admin-priority-slot-controls { grid-template-columns: 1fr; align-items: stretch; }
+  .admin-priority-slot-buttons { flex-wrap: wrap; }
+  .admin-priority-slot-controls > span { grid-column: 1; }
   .admin-rules-actions { align-items: stretch; flex-direction: column; }
   .admin-rules-actions .admin-primary-button { width: 100%; }
 }

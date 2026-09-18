@@ -64,6 +64,7 @@ class AdminApiTests(APITestCase):
         self.assertEqual(created.data['boh_shift_times'], DEFAULT_BOH_SHIFT_TIMES)
         self.assertEqual(created.data['zone_priority'], DEFAULT_ZONE_PRIORITY)
         self.assertEqual(created.data['zone_priority'].count('CASH'), 2)
+        self.assertEqual(created.data['zone_priority'].count('FITS'), 3)
         listed = self.client.get('/api/admin/organizations/')
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.data[0]['member_count'], 0)
@@ -74,10 +75,7 @@ class AdminApiTests(APITestCase):
 
     def test_admin_can_update_floor_map_rules(self):
         organization = Organization.objects.create(name='Rules Store')
-        priority = [
-            'CASH', 'WOMENS', 'MENS', 'FITS', 'FITS',
-            'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH',
-        ]
+        priority = ['CASH', 'GREET', 'CASH']
 
         response = self.client.patch(f'/api/admin/organizations/{organization.id}/', {
             'boh_shift_times': [{'start': '13:30', 'end': '18:00'}],
@@ -98,8 +96,11 @@ class AdminApiTests(APITestCase):
                 {'start': '14:00', 'end': '18:45'},
                 {'start': '14:00', 'end': '18:45'},
             ]},
-            {'zone_priority': DEFAULT_ZONE_PRIORITY[:-1]},
+            {'zone_priority': []},
+            {'zone_priority': ['WOMENS'] * 21},
             {'zone_priority': [{}, *DEFAULT_ZONE_PRIORITY[1:]]},
+            {'zone_priority': ['BOH']},
+            {'zone_priority': ['womens']},
         ]
 
         for payload in invalid_payloads:
@@ -111,6 +112,19 @@ class AdminApiTests(APITestCase):
         organization.refresh_from_db()
         self.assertEqual(organization.boh_shift_times, DEFAULT_BOH_SHIFT_TIMES)
         self.assertEqual(organization.zone_priority, DEFAULT_ZONE_PRIORITY)
+
+    def test_zone_priority_accepts_one_to_twenty_supported_slots(self):
+        organization = Organization.objects.create(name='Flexible Rules Store')
+
+        for priority in (['GREET'], ['CASH'] * 20):
+            with self.subTest(slot_count=len(priority)):
+                response = self.client.patch(
+                    f'/api/admin/organizations/{organization.id}/',
+                    {'zone_priority': priority},
+                    format='json',
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data['zone_priority'], priority)
 
     def test_admin_provisions_user_with_memberships_and_forced_password_change(self):
         first = Organization.objects.create(name='First Store')

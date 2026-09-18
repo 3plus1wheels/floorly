@@ -1,4 +1,3 @@
-from collections import Counter
 import re
 
 from django.contrib.auth import get_user_model
@@ -6,7 +5,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
 from rest_framework import serializers
 
-from .models import DEFAULT_ZONE_PRIORITY, Organization, OrganizationMembership, ThemePreference, UserProfile
+from .models import Organization, OrganizationMembership, ThemePreference, UserProfile
 
 User = get_user_model()
 
@@ -61,12 +60,13 @@ class OrganizationSerializer(serializers.ModelSerializer):
         return clean
 
     def validate_zone_priority(self, value):
-        if (
-            not isinstance(value, list)
-            or any(not isinstance(zone, str) for zone in value)
-            or Counter(value) != Counter(DEFAULT_ZONE_PRIORITY)
-        ):
-            raise serializers.ValidationError('Zone priority must reorder the eleven existing zone slots.')
+        allowed_zones = {'WOMENS', 'MENS', 'FITS', 'CASH', 'GREET'}
+        if not isinstance(value, list) or not 1 <= len(value) <= 20:
+            raise serializers.ValidationError('Zone priority must contain between 1 and 20 slots.')
+        if any(not isinstance(zone, str) or zone not in allowed_zones for zone in value):
+            raise serializers.ValidationError(
+                'Zone priority slots must be WOMENS, MENS, FITS, CASH, or GREET.'
+            )
         return value
 
 
