@@ -13,7 +13,10 @@ from django.conf import settings
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
-from .models import Employee, KronosImportConsent, ScheduleSyncTokenUse, Shift, StaffZone, ZONE_FIELDS
+from .models import (
+    Employee, KronosImportConsent, ScheduleSyncTokenUse, Shift, StaffZone,
+    WorkbookZoneOverride, WORKBOOK_ZONE_CHOICES, ZONE_FIELDS,
+)
 from .serializers import ShiftSerializer, EmployeeSerializer, StaffZoneSerializer
 from .authentication import ScheduleSyncAuthentication, ScheduleSyncToken
 from .identity import canonical_employee_name, default_workbook_name, workbook_name_parts, employee_summary, find_employee_by_name
@@ -656,6 +659,13 @@ class WorkbookView(APIView):
 
         # Determine which first names are shared so we can disambiguate
         shifts = list(shifts)  # evaluate queryset once
+        saved_overrides = {
+            (override.shift_id, override.hour): override.zone
+            for override in WorkbookZoneOverride.objects.filter(
+                shift__employee__organization=organization,
+                shift__date=target_date,
+            )
+        }
         role_overrides = {'associate': 'Stylist', 'management': 'CEL'}
         for shift in shifts:
             if (shift.start_time, shift.end_time) == BOH_CLOSING_SHIFT:
@@ -719,11 +729,17 @@ class WorkbookView(APIView):
                 )
 
             rows.append({
+                'shift_id': shift.id,
                 'name': display,
                 'full_name': raw,
                 'shift': shift_label,
                 'role': shift.effective_role,
                 'zones': zones,
+                'zone_overrides': {
+                    str(hour): saved_overrides[(shift.id, hour)]
+                    for hour in WORKBOOK_HOURS
+                    if (shift.id, hour) in saved_overrides and str(hour) in zones
+                },
             })
 
         from .kpi_service import build_kpi_payload
@@ -735,6 +751,98 @@ class WorkbookView(APIView):
             'rows': rows,
             'kpi': build_kpi_payload(organization, target_date),
         })
+
+
+class WorkbookZoneOverrideView(APIView):
+    """Atomically set or clear saved hourly zone overrides for one workbook day."""
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _payload(organization, target_date):
+        overrides = WorkbookZoneOverride.objects.filter(
+            shift__employee__organization=organization,
+            shift__date=target_date,
+        ).order_by('shift_id', 'hour')
+        values = [
+            {'shift_id': item.shift_id, 'hour': item.hour, 'zone': item.zone}
+            for item in overrides
+        ]
+        latest = overrides.order_by('-updated_at').values_list('updated_at', flat=True).first()
+        return {
+            'overrides': values,
+            'updatedAt': latest.isoformat() if latest else timezone.now().isoformat(),
+        }
+
+    def patch(self, request, business_date):
+        organization = organization_for_request(request)
+        try:
+            target_date = datetime.strptime(business_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        operations = [key for key in ('set', 'clear', 'reset_all') if key in request.data]
+        if len(operations) != 1:
+            return Response({'error': 'Provide exactly one zone operation.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        operation = operations[0]
+        if operation == 'reset_all':
+            if request.data[operation] is not True:
+                return Response({'error': 'reset_all must be true.'}, status=status.HTTP_400_BAD_REQUEST)
+            with transaction.atomic():
+                WorkbookZoneOverride.objects.filter(
+                    shift__employee__organization=organization,
+                    shift__date=target_date,
+                ).delete()
+            return Response(self._payload(organization, target_date))
+
+        body = request.data[operation]
+        if not isinstance(body, dict) or not isinstance(body.get('cells'), list) or not body['cells']:
+            return Response({'error': f'{operation}.cells must be a non-empty list.'}, status=status.HTTP_400_BAD_REQUEST)
+        valid_zones = {choice[0] for choice in WORKBOOK_ZONE_CHOICES}
+        zone = body.get('zone') if operation == 'set' else None
+        if operation == 'set' and zone not in valid_zones:
+            return Response({'error': 'Unknown zone.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        clean_cells = []
+        try:
+            for cell in body['cells']:
+                if not isinstance(cell, dict) or isinstance(cell.get('shift_id'), bool) or isinstance(cell.get('hour'), bool):
+                    raise ValueError
+                clean_cells.append((int(cell['shift_id']), int(cell['hour'])))
+        except (KeyError, TypeError, ValueError):
+            return Response({'error': 'Each cell needs integer shift_id and hour values.'}, status=status.HTTP_400_BAD_REQUEST)
+        clean_cells = list(dict.fromkeys(clean_cells))
+        if any(hour not in WORKBOOK_HOURS for _, hour in clean_cells):
+            return Response({'error': 'Cell hour is outside the workbook range.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        shifts = {
+            shift.id: shift
+            for shift in Shift.objects.select_related('employee').filter(
+                id__in={shift_id for shift_id, _ in clean_cells},
+                employee__organization=organization,
+                date=target_date,
+            )
+        }
+        if len(shifts) != len({shift_id for shift_id, _ in clean_cells}):
+            return Response({'error': 'A cell does not belong to this organization and date.'}, status=status.HTTP_400_BAD_REQUEST)
+        if any(not any(
+            _shift_covers_interval(shifts[shift_id], minute)
+            for minute in range(hour * 60, (hour + 1) * 60, WORKBOOK_INTERVAL_MINUTES)
+        ) for shift_id, hour in clean_cells):
+            return Response({'error': 'Cannot edit a blank workbook cell.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            if operation == 'clear':
+                for shift_id, hour in clean_cells:
+                    WorkbookZoneOverride.objects.filter(shift_id=shift_id, hour=hour).delete()
+            else:
+                for shift_id, hour in clean_cells:
+                    WorkbookZoneOverride.objects.update_or_create(
+                        shift_id=shift_id,
+                        hour=hour,
+                        defaults={'zone': zone, 'last_edited_by': request.user},
+                    )
+        return Response(self._payload(organization, target_date))
 
 
 class KpiDayStateView(APIView):

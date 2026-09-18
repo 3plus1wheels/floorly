@@ -27,6 +27,10 @@ class Employee(models.Model):
 
 
 ZONE_FIELDS = ['mens', 'womens', 'cash', 'fits', 'greet', 'boh']
+WORKBOOK_ZONE_CHOICES = [
+    (zone, zone)
+    for zone in ('WOMENS', 'MENS', 'FITS', 'CASH', 'GREET', 'FLEX', 'OFFICE', 'TASK', 'STYLIST', 'CEL', 'BOH')
+]
 
 
 class StaffZone(models.Model):
@@ -58,6 +62,29 @@ class Shift(models.Model):
 
     def __str__(self):
         return f"{self.employee.name} | {self.date} | {self.start_time}-{self.end_time}"
+
+
+class WorkbookZoneOverride(models.Model):
+    """A manager-selected hourly zone layered over the generated workbook map."""
+    shift = models.ForeignKey(Shift, on_delete=models.CASCADE, related_name='workbook_zone_overrides')
+    hour = models.PositiveSmallIntegerField()
+    zone = models.CharField(max_length=16, choices=WORKBOOK_ZONE_CHOICES)
+    last_edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='edited_workbook_zones',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['shift', 'hour'], name='unique_workbook_zone_shift_hour'),
+            models.CheckConstraint(
+                condition=models.Q(hour__gte=8, hour__lte=20),
+                name='workbook_zone_hour_range',
+            ),
+        ]
+        ordering = ['shift_id', 'hour']
 
 
 class KronosImportConsent(models.Model):

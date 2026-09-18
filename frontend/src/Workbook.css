@@ -332,6 +332,22 @@
   font-weight: 600;
   border-left: 1px solid rgba(13, 13, 18, 0.08);
   transition: opacity 0.1s;
+  user-select: none;
+}
+
+.wb-zone-selected {
+  box-shadow: inset 0 0 0 2px rgba(255, 236, 153, 0.95);
+}
+
+.wb-zone-active {
+  box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 5px rgba(13, 13, 18, 0.72);
+  position: relative;
+  z-index: 1;
+  outline: none;
+}
+
+.wb-overridden.wb-zone-selected:not(.wb-zone-active) {
+  box-shadow: inset 0 0 0 2px rgba(255, 236, 153, 0.95), inset 0 0 0 4px rgba(13, 13, 18, 0.24);
 }
 
 /* ── Status / error ── */
@@ -360,6 +376,33 @@
   margin-top: 10px;
   flex-wrap: wrap;
 }
+
+.wb-zone-palette-option {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.wb-zone-palette-option:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.wb-zone-palette-option:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.wb-zone-save-status {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 4px 8px;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.wb-zone-save-status.error { color: #8f2b21; }
 
 .wb-legend-item {
   padding: clamp(2px, 0.2vw, 4px) clamp(7px, 0.65vw, 11px);
@@ -806,6 +849,7 @@
   .wb-topbar,
   .wb-kpi-editor,
   .wb-kpi-status,
+  .wb-zone-save-status,
   .wb-import-result,
   .wb-print-fit-note,
   .wb-legend,
@@ -813,6 +857,12 @@
   .wb-reset-btn,
   .wb-customize-btn {
     display: none !important;
+  }
+
+  .wb-zone-selected,
+  .wb-zone-active,
+  .wb-overridden.wb-zone-selected:not(.wb-zone-active) {
+    box-shadow: none !important;
   }
 
   /* Remove outer app spacing that can push content onto page 2 */

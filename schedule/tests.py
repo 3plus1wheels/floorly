@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
 from api.models import Organization, OrganizationMembership, UserProfile
-from .models import Employee, KronosImportConsent, Shift, StaffZone
+from .models import Employee, KronosImportConsent, Shift, StaffZone, WorkbookZoneOverride
 from .authentication import ScheduleSyncToken
 from .parsers import _normalize_role
 from .views import _build_interval_assignments
@@ -462,12 +462,15 @@ class ScheduleSyncTests(TestCase):
     def test_repeated_payload_is_idempotent(self):
         first = self.post()
         ids = list(Shift.objects.order_by('id').values_list('id', flat=True))
+        override = WorkbookZoneOverride.objects.create(
+            shift_id=ids[0], hour=9, zone='CASH', last_edited_by=self.user)
         second = self.post()
         self.assertEqual(first.data['payload_hash'], second.data['payload_hash'])
         self.assertEqual(second.data['shifts_created'], 0)
         self.assertEqual(second.data['shifts_updated'], 0)
         self.assertEqual(second.data['shifts_deleted'], 0)
         self.assertEqual(list(Shift.objects.order_by('id').values_list('id', flat=True)), ids)
+        self.assertTrue(WorkbookZoneOverride.objects.filter(pk=override.pk, zone='CASH').exists())
 
     def test_write_failure_rolls_back_delete_and_creates(self):
         employee = Employee.objects.create(organization=self.organization, name='Existing')
@@ -816,3 +819,97 @@ class ScheduleSyncTicketSecurityTests(TestCase):
         self.organization.save(update_fields=['is_active'])
         UserProfile.objects.create(user=self.user, full_name='Extension User', must_change_password=True)
         self.assertEqual(self.client.post(self.ticket_url, **self.access_headers()).status_code, 403)
+
+
+class WorkbookZoneOverrideTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='zone-editor', password='password')
+        self.organization = Organization.objects.create(name='Zone Store')
+        OrganizationMembership.objects.create(user=self.user, organization=self.organization)
+        self.employee = Employee.objects.create(organization=self.organization, name='Alex Stylist')
+        self.shift = Shift.objects.create(
+            employee=self.employee, date=date(2026, 9, 7), start_time=time(9), end_time=time(12), role='Stylist')
+        StaffZone.objects.create(employee=self.employee, womens=3)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.client.credentials(HTTP_X_ORGANIZATION_ID=str(self.organization.id))
+        self.url = reverse('workbook_zone_overrides', args=['2026-09-07'])
+
+    def test_bulk_set_is_deduplicated_audited_and_returned_by_workbook(self):
+        response = self.client.patch(self.url, {
+            'set': {
+                'zone': 'CASH',
+                'cells': [
+                    {'shift_id': self.shift.id, 'hour': 9},
+                    {'shift_id': self.shift.id, 'hour': 10},
+                    {'shift_id': self.shift.id, 'hour': 10},
+                ],
+            },
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(WorkbookZoneOverride.objects.count(), 2)
+        self.assertEqual(
+            set(WorkbookZoneOverride.objects.values_list('hour', 'zone', 'last_edited_by_id')),
+            {(9, 'CASH', self.user.id), (10, 'CASH', self.user.id)},
+        )
+        workbook = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        row = workbook.data['rows'][0]
+        self.assertEqual(row['shift_id'], self.shift.id)
+        self.assertEqual(row['zones']['9'], 'WOMENS')
+        self.assertEqual(row['zone_overrides'], {'9': 'CASH', '10': 'CASH'})
+
+    def test_selected_clear_and_whole_day_reset_restore_generated_zones(self):
+        for hour in (9, 10):
+            WorkbookZoneOverride.objects.create(shift=self.shift, hour=hour, zone='MENS', last_edited_by=self.user)
+
+        cleared = self.client.patch(self.url, {
+            'clear': {'cells': [{'shift_id': self.shift.id, 'hour': 9}]},
+        }, format='json')
+        self.assertEqual(cleared.status_code, 200)
+        self.assertEqual(cleared.data['overrides'], [
+            {'shift_id': self.shift.id, 'hour': 10, 'zone': 'MENS'},
+        ])
+
+        reset = self.client.patch(self.url, {'reset_all': True}, format='json')
+        self.assertEqual(reset.status_code, 200)
+        self.assertEqual(reset.data['overrides'], [])
+        self.assertFalse(WorkbookZoneOverride.objects.exists())
+
+    def test_invalid_mixed_batch_is_atomic_and_organization_scoped(self):
+        other = Organization.objects.create(name='Other Zone Store')
+        foreign_employee = Employee.objects.create(organization=other, name='Foreign Stylist')
+        foreign_shift = Shift.objects.create(
+            employee=foreign_employee, date=date(2026, 9, 7), start_time=time(9), end_time=time(12), role='Stylist')
+        response = self.client.patch(self.url, {
+            'set': {
+                'zone': 'CASH',
+                'cells': [
+                    {'shift_id': self.shift.id, 'hour': 9},
+                    {'shift_id': foreign_shift.id, 'hour': 9},
+                ],
+            },
+        }, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(WorkbookZoneOverride.objects.exists())
+
+    def test_rejects_invalid_zone_hour_blank_cell_and_multiple_operations(self):
+        payloads = [
+            {'set': {'zone': 'UNKNOWN', 'cells': [{'shift_id': self.shift.id, 'hour': 9}]}},
+            {'set': {'zone': 'CASH', 'cells': [{'shift_id': self.shift.id, 'hour': 21}]}},
+            {'set': {'zone': 'CASH', 'cells': [{'shift_id': self.shift.id, 'hour': 8}]}},
+            {'set': {'zone': 'CASH', 'cells': [{'shift_id': self.shift.id, 'hour': 9}]}, 'reset_all': True},
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                self.assertEqual(self.client.patch(self.url, payload, format='json').status_code, 400)
+        self.assertFalse(WorkbookZoneOverride.objects.exists())
+
+    def test_override_survives_same_shift_update_and_cascades_when_shift_removed(self):
+        override = WorkbookZoneOverride.objects.create(
+            shift=self.shift, hour=9, zone='GREET', last_edited_by=self.user)
+        self.shift.end_time = time(13)
+        self.shift.save(update_fields=['end_time'])
+        self.assertTrue(WorkbookZoneOverride.objects.filter(pk=override.pk).exists())
+        self.shift.delete()
+        self.assertFalse(WorkbookZoneOverride.objects.filter(pk=override.pk).exists())

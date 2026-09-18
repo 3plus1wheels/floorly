@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import ReactDOM from 'react-dom';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AlertTriangle, Inbox, LoaderCircle, Printer, Settings2 } from 'lucide-react';
 import API_BASE from './config';
 import { useAuth } from './AuthContext';
@@ -187,78 +186,25 @@ function zoneStyle(zone) {
   return ZONE_STYLE[zone] || { bg: '#555', text: '#fff' };
 }
 
-function ZoneCell({ zone, cellKey, overrides, setOverrides }) {
-  const [open, setOpen] = useState(false);
-  const [pickerPos, setPickerPos] = useState({ top: 0, left: 0 });
-  const cellRef = useRef(null);
-  const effective = overrides[cellKey] || zone;
-  const isOverridden = !!overrides[cellKey];
-
-  // Close on outside click
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e) => {
-      if (cellRef.current && cellRef.current.contains(e.target)) return;
-      if (e.target.closest('.wb-zone-picker')) return;
-      setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  // Close on scroll/resize so picker doesn't drift
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    return () => { window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
-  }, [open]);
-
+function ZoneCell({ zone, effective, overridden, selected, active, cellRef, onPointerDown, onPointerEnter, onKeyDown, onFocus }) {
   if (!zone) return <td className="wb-hour-cell" />;
 
   const s = zoneStyle(effective);
 
-  const handleClick = () => {
-    if (!open && cellRef.current) {
-      const rect = cellRef.current.getBoundingClientRect();
-      setPickerPos({ top: rect.bottom + 4, left: rect.left });
-    }
-    setOpen(o => !o);
-  };
-
-  const picker = open ? ReactDOM.createPortal(
-    <div
-      className="wb-zone-picker"
-      style={{ top: pickerPos.top, left: pickerPos.left }}
-      onMouseDown={e => e.stopPropagation()}
-    >
-      {ZONE_OPTIONS.map(z => {
-        const zs = zoneStyle(z);
-        return (
-          <div
-            key={z}
-            className={`wb-zone-option${effective === z ? ' selected' : ''}`}
-            style={{ backgroundColor: zs.bg, color: zs.text }}
-            onClick={() => { setOverrides(prev => ({ ...prev, [cellKey]: z })); setOpen(false); }}
-          >
-            {z}
-          </div>
-        );
-      })}
-    </div>,
-    document.body
-  ) : null;
-
   return (
     <td
       ref={cellRef}
-      className={`wb-hour-cell wb-hour-clickable${isOverridden ? ' wb-overridden' : ''}`}
+      className={`wb-hour-cell wb-hour-clickable${overridden ? ' wb-overridden' : ''}${selected ? ' wb-zone-selected' : ''}${active ? ' wb-zone-active' : ''}`}
       style={{ backgroundColor: s.bg, color: s.text }}
-      onClick={handleClick}
+      role="gridcell"
+      aria-selected={selected}
+      tabIndex={active ? 0 : -1}
+      onPointerDown={onPointerDown}
+      onPointerEnter={onPointerEnter}
+      onKeyDown={onKeyDown}
+      onFocus={onFocus}
     >
       {effective}
-      {picker}
     </td>
   );
 }
@@ -527,12 +473,20 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState(null);
   const [overrides, setOverrides] = useState({});
+  const [selection, setSelection] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const [zoneSaveStatus, setZoneSaveStatus] = useState('saved');
+  const [zoneSaveError, setZoneSaveError] = useState('');
   const [kpiState, setKpiState] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved');
   const [saveError, setSaveError] = useState('');
   const saveQueueRef = useRef(Promise.resolve());
   const loadRequestRef = useRef(0);
   const saveRequestRef = useRef(0);
+  const zoneSaveRequestRef = useRef(0);
+  const draggingRef = useRef(false);
+  const cellRefs = useRef(new Map());
+  const paletteRefs = useRef([]);
 
   // KPI row configuration — shared across all days
   const [kpiRows, setKpiRows] = useState(DEFAULT_KPI_ROWS);
@@ -561,6 +515,10 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     setLoading(true);
     setError(null);
     setOverrides({});
+    setSelection(null);
+    setDragging(false);
+    setZoneSaveStatus('saved');
+    setZoneSaveError('');
     setData(null);
     setKpiState(null);
     setGoals(EMPTY_GOALS);
@@ -568,6 +526,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     setSaveError('');
     setSaveStatus('saved');
     saveRequestRef.current += 1;
+    zoneSaveRequestRef.current += 1;
     try {
       const res = await fetch(
         `${API_BASE}/api/schedule/workbook/?week_start=${toYMD(weekStart)}&day=${activeDay}`,
@@ -577,6 +536,13 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
       const payload = await res.json();
       if (requestId !== loadRequestRef.current || currentScopeRef.current !== requestedScope) return;
       setData(payload);
+      const savedZones = {};
+      payload.rows.forEach(row => {
+        Object.entries(row.zone_overrides || {}).forEach(([hour, zone]) => {
+          savedZones[`${row.shift_id}:${hour}`] = zone;
+        });
+      });
+      setOverrides(savedZones);
       const kpi = payload.kpi || null;
       setKpiState(kpi);
       setGoals(kpi?.goals || EMPTY_GOALS);
@@ -651,7 +617,148 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     saveKpiPatch({ hourly_updates: { [hour]: { [key]: normalizedValue } } });
   }, [saveKpiPatch]);
 
+  useEffect(() => {
+    if (!dragging) return undefined;
+    const stopDragging = () => {
+      draggingRef.current = false;
+      setDragging(false);
+    };
+    document.addEventListener('pointerup', stopDragging);
+    document.addEventListener('pointercancel', stopDragging);
+    return () => {
+      document.removeEventListener('pointerup', stopDragging);
+      document.removeEventListener('pointercancel', stopDragging);
+    };
+  }, [dragging]);
+
+  const selectedCells = useMemo(() => {
+    if (!selection || !data) return [];
+    const rowStart = Math.min(selection.anchor.row, selection.focus.row);
+    const rowEnd = Math.max(selection.anchor.row, selection.focus.row);
+    const colStart = Math.min(selection.anchor.col, selection.focus.col);
+    const colEnd = Math.max(selection.anchor.col, selection.focus.col);
+    const cells = [];
+    for (let rowIndex = rowStart; rowIndex <= rowEnd; rowIndex += 1) {
+      const row = data.rows[rowIndex];
+      if (!row) continue;
+      for (let colIndex = colStart; colIndex <= colEnd; colIndex += 1) {
+        const hour = data.hours[colIndex];
+        if (hour !== undefined && row.zones[String(hour)]) {
+          cells.push({ row: rowIndex, col: colIndex, shift_id: row.shift_id, hour });
+        }
+      }
+    }
+    return cells;
+  }, [data, selection]);
+
+  const selectedKeys = useMemo(
+    () => new Set(selectedCells.map(cell => `${cell.shift_id}:${cell.hour}`)),
+    [selectedCells]
+  );
+
+  const focusGridCell = useCallback((cell) => {
+    window.requestAnimationFrame(() => cellRefs.current.get(`${cell.row}:${cell.col}`)?.focus());
+  }, []);
+
+  const saveZoneOperation = useCallback(async (operation, zone = null) => {
+    if (zoneSaveStatus === 'saving') return;
+    const cells = selectedCells.map(({ shift_id, hour }) => ({ shift_id, hour }));
+    if (operation !== 'reset_all' && cells.length === 0) return;
+    const before = { ...overrides };
+    if (operation === 'set') {
+      setOverrides(current => {
+        const next = { ...current };
+        cells.forEach(cell => { next[`${cell.shift_id}:${cell.hour}`] = zone; });
+        return next;
+      });
+    } else if (operation === 'clear') {
+      setOverrides(current => {
+        const next = { ...current };
+        cells.forEach(cell => { delete next[`${cell.shift_id}:${cell.hour}`]; });
+        return next;
+      });
+    } else {
+      setOverrides({});
+    }
+
+    const requestId = ++zoneSaveRequestRef.current;
+    const requestedScope = scopeKey;
+    setZoneSaveStatus('saving');
+    setZoneSaveError('');
+    const body = operation === 'reset_all'
+      ? { reset_all: true }
+      : { [operation]: { cells, ...(operation === 'set' ? { zone } : {}) } };
+    try {
+      const response = await fetch(`${API_BASE}/api/schedule/workbook-zones/${requestedDate}/`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-Organization-ID': selectedOrganizationId,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Could not save zone assignments.');
+      if (requestId !== zoneSaveRequestRef.current || currentScopeRef.current !== requestedScope) return;
+      const canonical = {};
+      (payload.overrides || []).forEach(item => {
+        canonical[`${item.shift_id}:${item.hour}`] = item.zone;
+      });
+      setOverrides(canonical);
+      setZoneSaveStatus('saved');
+    } catch (err) {
+      if (requestId !== zoneSaveRequestRef.current || currentScopeRef.current !== requestedScope) return;
+      setOverrides(before);
+      setZoneSaveStatus('error');
+      setZoneSaveError(err.message || 'Could not save zone assignments.');
+    }
+  }, [overrides, requestedDate, scopeKey, selectedCells, selectedOrganizationId, token, zoneSaveStatus]);
+
+  const moveSelection = useCallback((event) => {
+    if (!selection || !data) return;
+    const directions = {
+      ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0],
+    };
+    const direction = directions[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    let row = selection.focus.row;
+    let col = selection.focus.col;
+    do {
+      row += direction[0];
+      col += direction[1];
+      if (row < 0 || row >= data.rows.length || col < 0 || col >= data.hours.length) return;
+    } while (!data.rows[row].zones[String(data.hours[col])]);
+    const focus = { row, col };
+    setSelection(current => ({ anchor: event.shiftKey ? current.anchor : focus, focus }));
+    focusGridCell(focus);
+  }, [data, focusGridCell, selection]);
+
+  const handleGridKeyDown = useCallback((event) => {
+    if (event.key.startsWith('Arrow')) {
+      moveSelection(event);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      paletteRefs.current[0]?.focus();
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      saveZoneOperation('clear');
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      setSelection(null);
+    }
+  }, [moveSelection, saveZoneOperation]);
+
   const weekDates = DAYS.map((_, i) => addDays(weekStart, i));
+  const firstEditableCell = useMemo(() => {
+    if (!data) return null;
+    for (let row = 0; row < data.rows.length; row += 1) {
+      const col = data.hours.findIndex(hour => Boolean(data.rows[row].zones[String(hour)]));
+      if (col !== -1) return { row, col };
+    }
+    return null;
+  }, [data]);
   const hasOverrides = Object.keys(overrides).length > 0;
   const optionalKpiCount = kpiRows.filter(r => r.optional || String(r.id).startsWith('custom_')).length;
 
@@ -679,7 +786,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
             Reset KPIs
           </button>
           {hasOverrides && (
-            <button className="wb-reset-btn" onClick={() => setOverrides({})}>
+            <button className="wb-reset-btn" onClick={() => saveZoneOperation('reset_all')} disabled={zoneSaveStatus === 'saving'}>
               Reset zones
             </button>
           )}
@@ -720,6 +827,13 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
         </span>
         {saveError && <span className="wb-kpi-save-error">{saveError} Your latest edit is shown here but may not be shared.</span>}
       </div>
+      {(hasOverrides || zoneSaveStatus !== 'saved') && (
+        <div className={`wb-zone-save-status${zoneSaveStatus === 'error' ? ' error' : ''}`} aria-live="polite">
+          <span>Zone assignments</span>
+          <span>{zoneSaveStatus === 'saving' ? 'Saving…' : zoneSaveStatus === 'error' ? 'Save failed' : 'Saved'}</span>
+          {zoneSaveError && <span>{zoneSaveError} Your previous saved assignments were restored.</span>}
+        </div>
+      )}
       {/* ── KPI editor panel ── */}
       {editingKpis && (
         <div className="wb-kpi-editor">
@@ -828,7 +942,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
 
           {data && !loading && (
             <div className="wb-table-wrap">
-              <table className="wb-table">
+              <table className="wb-table" role="grid" aria-label="Floorly zone map">
                 <thead>
                   <tr>
                     <th className="wb-zone-header" colSpan={2 + data.col_headers.length}>
@@ -859,19 +973,50 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
                     </tr>
                   ) : (
                     data.rows.map((row, ri) => (
-                      <tr key={ri}>
+                      <tr key={row.shift_id}>
                         <td className="wb-name-cell">{row.name}</td>
                         <td className="wb-shift-cell">{row.shift}</td>
                         {data.hours.map(h => {
                           const zone = row.zones[String(h)];
-                          const cellKey = `${ri}_${h}`;
+                          const col = data.hours.indexOf(h);
+                          const cellKey = `${row.shift_id}:${h}`;
+                          const coordKey = `${ri}:${col}`;
+                          const isActive = selection
+                            ? selection.focus.row === ri && selection.focus.col === col
+                            : Boolean(zone) && firstEditableCell?.row === ri && firstEditableCell?.col === col;
                           return (
                             <ZoneCell
                               key={h}
                               zone={zone}
-                              cellKey={cellKey}
-                              overrides={overrides}
-                              setOverrides={setOverrides}
+                              effective={overrides[cellKey] || zone}
+                              overridden={Boolean(overrides[cellKey])}
+                              selected={selectedKeys.has(cellKey)}
+                              active={isActive}
+                              cellRef={element => {
+                                if (element) cellRefs.current.set(coordKey, element);
+                                else cellRefs.current.delete(coordKey);
+                              }}
+                              onFocus={() => {
+                                if (!selection && zone) setSelection({ anchor: { row: ri, col }, focus: { row: ri, col } });
+                              }}
+                              onPointerDown={event => {
+                                if (!zone || (event.button !== undefined && event.button !== 0)) return;
+                                event.preventDefault();
+                                const focus = { row: ri, col };
+                                setSelection(current => ({
+                                  anchor: event.shiftKey && current ? current.anchor : focus,
+                                  focus,
+                                }));
+                                if (event.pointerType !== 'touch') {
+                                  draggingRef.current = true;
+                                  setDragging(true);
+                                }
+                                focusGridCell(focus);
+                              }}
+                              onPointerEnter={() => {
+                                if (draggingRef.current && zone) setSelection(current => current ? ({ ...current, focus: { row: ri, col } }) : current);
+                              }}
+                              onKeyDown={handleGridKeyDown}
                             />
                           );
                         })}
@@ -894,11 +1039,32 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
           )}
 
           {/* ── Legend ── */}
-          <div className="wb-legend">
-            {Object.entries(ZONE_STYLE).map(([zone, s]) => (
-              <span key={zone} className="wb-legend-item" style={{ backgroundColor: s.bg, color: s.text }}>
+          <div className="wb-legend" role="toolbar" aria-label="Assign zone to selected cells">
+            {Object.entries(ZONE_STYLE).map(([zone, s], index) => (
+              <button
+                key={zone}
+                ref={element => { paletteRefs.current[index] = element; }}
+                type="button"
+                className="wb-legend-item wb-zone-palette-option"
+                style={{ backgroundColor: s.bg, color: s.text }}
+                disabled={selectedCells.length === 0 || zoneSaveStatus === 'saving'}
+                onClick={() => saveZoneOperation('set', zone)}
+                onKeyDown={event => {
+                  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    paletteRefs.current[(index + 1) % ZONE_OPTIONS.length]?.focus();
+                  } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    paletteRefs.current[(index - 1 + ZONE_OPTIONS.length) % ZONE_OPTIONS.length]?.focus();
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault();
+                    if (selection) focusGridCell(selection.focus);
+                  }
+                }}
+                title={selectedCells.length ? `Assign ${zone} to ${selectedCells.length} selected cell${selectedCells.length === 1 ? '' : 's'}` : 'Select zone cells first'}
+              >
                 {zone}
-              </span>
+              </button>
             ))}
           </div>
         </div>

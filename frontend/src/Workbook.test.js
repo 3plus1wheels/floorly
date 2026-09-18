@@ -224,4 +224,114 @@ describe('Workbook KPI persistence', () => {
     expect(container.querySelector('.wb-root')).toHaveClass('wb-print-extra-compact');
     expect(screen.getByRole('option', { name: 'Print Fit: Fit More' })).toBeInTheDocument();
   });
+
+  test('selects a rectangle, skips blank cells, saves a shared zone, and clears it with Delete', async () => {
+    let savedOverrides = [];
+    const zoneRequests = [];
+    fetchMock.mockImplementation(async (url, options = {}) => {
+      const parsed = new URL(String(url), 'http://localhost');
+      if (parsed.pathname === '/api/schedule/workbook/') {
+        return response({
+          date: '2026-09-14', day: 'Mon', hours: [9, 10, 11],
+          col_headers: ['9am-10am', '10am-11am', '11am-12pm'],
+          rows: [
+            { shift_id: 101, name: 'ALEX', shift: '9-12', zones: { 9: 'WOMENS', 10: 'WOMENS', 11: 'WOMENS' }, zone_overrides: {} },
+            { shift_id: 102, name: 'BLAIR', shift: '10-12', zones: { 10: 'MENS', 11: 'MENS' }, zone_overrides: {} },
+          ],
+          kpi: makeKpi('2026-09-14'),
+        });
+      }
+      if (parsed.pathname === '/api/schedule/workbook-zones/2026-09-14/') {
+        const patch = JSON.parse(options.body);
+        zoneRequests.push(patch);
+        if (patch.set) {
+          savedOverrides = patch.set.cells.map(cell => ({ ...cell, zone: patch.set.zone }));
+        } else if (patch.clear) {
+          const cleared = new Set(patch.clear.cells.map(cell => `${cell.shift_id}:${cell.hour}`));
+          savedOverrides = savedOverrides.filter(item => !cleared.has(`${item.shift_id}:${item.hour}`));
+        }
+        return response({ overrides: savedOverrides, updatedAt: '2026-09-14T12:00:00Z' });
+      }
+      return response({});
+    });
+
+    render(<Workbook />);
+    const alexNine = (await screen.findAllByRole('gridcell', { name: 'WOMENS' }))[0];
+    const blairTen = screen.getAllByRole('gridcell', { name: 'MENS' })[0];
+    fireEvent.pointerDown(alexNine, { button: 0, pointerType: 'mouse' });
+    fireEvent.pointerEnter(blairTen, { pointerType: 'mouse' });
+    fireEvent.pointerUp(document);
+
+    const cash = screen.getByRole('button', { name: 'CASH' });
+    await waitFor(() => expect(cash).toHaveAttribute('title', 'Assign CASH to 3 selected cells'));
+    fireEvent.click(cash);
+    await waitFor(() => expect(zoneRequests).toHaveLength(1));
+    expect(zoneRequests[0]).toEqual({
+      set: {
+        zone: 'CASH',
+        cells: [
+          { shift_id: 101, hour: 9 },
+          { shift_id: 101, hour: 10 },
+          { shift_id: 102, hour: 10 },
+        ],
+      },
+    });
+    expect(screen.getAllByRole('gridcell', { name: 'CASH' })).toHaveLength(3);
+
+    await waitFor(() => expect(cash).not.toBeDisabled());
+    fireEvent.keyDown(blairTen, { key: 'Delete' });
+    await waitFor(() => expect(zoneRequests).toHaveLength(2));
+    expect(zoneRequests[1].clear.cells).toHaveLength(3);
+    await waitFor(() => expect(screen.queryAllByRole('gridcell', { name: 'CASH' })).toHaveLength(0));
+  });
+
+  test('extends selection with keyboard and focuses the palette with Enter', async () => {
+    fetchMock.mockImplementation(async (url) => {
+      const parsed = new URL(String(url), 'http://localhost');
+      if (parsed.pathname === '/api/schedule/workbook/') {
+        return response({
+          date: '2026-09-14', day: 'Mon', hours: [9, 10], col_headers: ['9am-10am', '10am-11am'],
+          rows: [{ shift_id: 201, name: 'ALEX', shift: '9-11', zones: { 9: 'WOMENS', 10: 'MENS' }, zone_overrides: {} }],
+          kpi: makeKpi('2026-09-14'),
+        });
+      }
+      return response({ overrides: [] });
+    });
+
+    render(<Workbook />);
+    const first = await screen.findByRole('gridcell', { name: 'WOMENS' });
+    fireEvent.focus(first);
+    await waitFor(() => expect(first).toHaveAttribute('aria-selected', 'true'));
+    fireEvent.keyDown(first, { key: 'ArrowRight', shiftKey: true });
+    const second = screen.getByRole('gridcell', { name: 'MENS' });
+    await waitFor(() => expect(second).toHaveAttribute('aria-selected', 'true'));
+    fireEvent.keyDown(second, { key: 'Enter' });
+    expect(screen.getByRole('button', { name: 'WOMENS' })).toHaveFocus();
+  });
+
+  test('restores saved zone state and keeps the selection when a zone save fails', async () => {
+    fetchMock.mockImplementation(async (url) => {
+      const parsed = new URL(String(url), 'http://localhost');
+      if (parsed.pathname === '/api/schedule/workbook/') {
+        return response({
+          date: '2026-09-14', day: 'Mon', hours: [9], col_headers: ['9am-10am'],
+          rows: [{ shift_id: 301, name: 'ALEX', shift: '9-10', zones: { 9: 'WOMENS' }, zone_overrides: {} }],
+          kpi: makeKpi('2026-09-14'),
+        });
+      }
+      if (parsed.pathname === '/api/schedule/workbook-zones/2026-09-14/') {
+        return response({ error: 'Zone save rejected.' }, 400);
+      }
+      return response({});
+    });
+
+    render(<Workbook />);
+    const cell = await screen.findByRole('gridcell', { name: 'WOMENS' });
+    fireEvent.pointerDown(cell, { button: 0, pointerType: 'mouse' });
+    fireEvent.pointerUp(document);
+    fireEvent.click(screen.getByRole('button', { name: 'CASH' }));
+
+    expect(await screen.findByText(/Zone save rejected\. Your previous saved assignments were restored\./)).toBeInTheDocument();
+    expect(screen.getByRole('gridcell', { name: 'WOMENS' })).toHaveAttribute('aria-selected', 'true');
+  });
 });
