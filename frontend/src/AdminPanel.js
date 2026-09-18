@@ -31,6 +31,28 @@ function ErrorMessage({ children }) {
   return <div className="admin-error" role="alert"><AlertTriangle size={17} />{children}</div>;
 }
 
+function CollapsibleSection({ className = '', kicker, icon: Icon, title, description, trailing, children }) {
+  return <details className={`admin-section admin-collapsible-section ${className}`.trim()}>
+    <summary
+      className="admin-section-summary"
+      onKeyDown={event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        event.currentTarget.parentElement.open = !event.currentTarget.parentElement.open;
+      }}
+    >
+      <div>
+        <span className="admin-kicker">{kicker}</span>
+        <h3><Icon size={19} /> {title}</h3>
+        <p>{description}</p>
+      </div>
+      {trailing}
+      <ChevronDown className="admin-disclosure" size={19} aria-hidden="true" />
+    </summary>
+    <div className="admin-section-content">{children}</div>
+  </details>;
+}
+
 function latestImportFrom(data) {
   if (Array.isArray(data)) return data[0] || null;
   return data?.latest || data?.latest_import || data?.batch || data?.imports?.[0] || data?.results?.[0] || data || null;
@@ -120,8 +142,13 @@ function FloorMapRules({ organization, saving, onSave }) {
     return from === to ? current : arrayMove(current, from, to);
   });
 
-  return <section className="admin-section admin-floor-rules-section">
-    <div className="admin-section-heading"><div><span className="admin-kicker">Workbook automation</span><h3><MapPinned size={19} /> Floor map rules</h3><p>Configure automatic BOH shifts and stylist zone demand for {organization.name}.</p></div></div>
+  return <CollapsibleSection
+    className="admin-floor-rules-section"
+    kicker="Workbook automation"
+    icon={MapPinned}
+    title="Floor map rules"
+    description={`Configure automatic BOH shifts and stylist zone demand for ${organization.name}.`}
+  >
     <form onSubmit={event => { event.preventDefault(); if (!invalid && dirty) onSave({ boh_shift_times: bohTimes, zone_priority: currentPriority }); }}>
       <div className="admin-rules-grid">
         <div className="admin-boh-rules">
@@ -150,7 +177,7 @@ function FloorMapRules({ organization, saving, onSave }) {
       </div>
       <div className="admin-rules-actions"><span>{dirty ? 'Unsaved floor map changes' : 'Floor map rules are up to date'}</span><button type="submit" className="admin-primary-button" disabled={saving || invalid || !dirty}>{saving ? 'Saving…' : 'Save floor map rules'}</button></div>
     </form>
-  </section>;
+  </CollapsibleSection>;
 }
 
 export default function AdminPanel({ onOrganizationsChanged }) {
@@ -440,8 +467,13 @@ export default function AdminPanel({ onOrganizationsChanged }) {
     {notice && <div className="admin-notice" role="status"><Check size={16} />{notice}<button type="button" aria-label="Dismiss" onClick={() => setNotice('')}><X size={15} /></button></div>}
 
     {!selectedOrganization ? <section className="admin-empty"><Building2 /><h3>No organization yet</h3><p>Create an organization below to begin managing a team.</p></section> : <>
-      <section className="admin-section admin-kpi-import-section">
-        <div className="admin-section-heading"><div><span className="admin-kicker">Workbook data</span><h3><FileSpreadsheet size={19} /> KPI workbook import</h3><p>Upload both fiscal-year workbooks for {selectedOrganization.name}.</p></div></div>
+      <CollapsibleSection
+        className="admin-kpi-import-section"
+        kicker="Workbook data"
+        icon={FileSpreadsheet}
+        title="KPI workbook import"
+        description={`Upload both fiscal-year workbooks for ${selectedOrganization.name}.`}
+      >
         <p className="admin-kpi-replacement-note">A valid import replaces this organization’s normalized KPI data for both years. Original workbook files are not retained; filenames and import audit metadata remain. Saved daily overrides stay in place.</p>
         <form className="admin-kpi-upload-form" onSubmit={uploadKpiWorkbooks}>
           <label>Current fiscal year workbook (.xlsx)<input key={`current-${kpiFileInputKey}`} aria-label="Current fiscal year workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => setCurrentKpiFile(event.target.files?.[0] || null)} /></label>
@@ -468,10 +500,16 @@ export default function AdminPanel({ onOrganizationsChanged }) {
             {importWarnings(kpiImport).length > 0 && <div className="admin-kpi-warnings"><strong><AlertTriangle size={14} /> Import warnings</strong><ul>{importWarnings(kpiImport).map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}</ul></div>}
           </>}
         </div>
-      </section>
+      </CollapsibleSection>
       <FloorMapRules key={selectedOrganization.id} organization={selectedOrganization} saving={saving} onSave={saveFloorRules} />
-      <section className="admin-section admin-team-section">
-        <div className="admin-section-heading"><div><span className="admin-kicker">People</span><h3><Users size={19} /> Team</h3><p>Roster records imported from the schedule workbook.</p></div><span className="admin-count">{team.length}<small> / {employees.length} staff</small></span></div>
+      <CollapsibleSection
+        className="admin-team-section"
+        kicker="People"
+        icon={Users}
+        title="Team"
+        description="Roster records imported from the schedule workbook."
+        trailing={<span className="admin-count">{team.length}<small> / {employees.length} staff</small></span>}
+      >
         {!selectedOrganization.is_active ? <div className="admin-inline-state"><AlertTriangle size={18} /><div><strong>Team editing is paused</strong><span>Reactivate this organization to load and edit its staff roster.</span></div></div> : <>
           <label className="admin-search"><Search size={17} /><input type="search" placeholder="Search name, workbook, or job" value={search} onChange={event => setSearch(event.target.value)} /></label>
           {busy && !employees.length ? <div className="admin-loading"><LoaderCircle className="admin-spinner" /> Loading team…</div> : team.length ? <div className="admin-team-list">
@@ -488,11 +526,16 @@ export default function AdminPanel({ onOrganizationsChanged }) {
             </article>)}
           </div> : <div className="admin-inline-state"><Users size={18} /><div><strong>{search ? 'No matching staff' : 'No staff records yet'}</strong><span>{search ? 'Try a different name, workbook, or job.' : 'Import a schedule to populate this organization’s team.'}</span></div></div>}
         </>}
-      </section>
+      </CollapsibleSection>
 
-      <details className="admin-section admin-access-section">
-        <summary><div><span className="admin-kicker">Sign-in and permissions</span><h3><ShieldCheck size={19} /> Access Accounts</h3><p>Manage login accounts connected to {selectedOrganization.name}.</p></div><span className="admin-count">{accountRows.length}<small> accounts</small></span><ChevronDown className="admin-disclosure" size={19} /></summary>
-        <div className="admin-access-content">
+      <CollapsibleSection
+        className="admin-access-section"
+        kicker="Sign-in and permissions"
+        icon={ShieldCheck}
+        title="Access Accounts"
+        description={`Manage login accounts connected to ${selectedOrganization.name}.`}
+        trailing={<span className="admin-count">{accountRows.length}<small> accounts</small></span>}
+      >
           <form className="admin-create-account" onSubmit={createUser}>
             <div className="admin-subheading"><div><h4>Create an access account</h4><p>New accounts are added to {selectedOrganization.name}.</p></div></div>
             <div className="admin-form-grid">
@@ -514,18 +557,22 @@ export default function AdminPanel({ onOrganizationsChanged }) {
               <div className="admin-account-actions"><button type="button" onClick={() => setEditAccount({ id: user.id, full_name: user.full_name || '', username: user.username || '', email: user.email || '', is_admin: Boolean(user.is_admin) })}><Pencil size={15} /> Edit</button><button type="button" onClick={() => { setResetAccount(user); setTemporaryPassword(''); }}><KeyRound size={15} /> Password</button><button type="button" disabled={saving || user.id === currentUser?.id} title={user.id === currentUser?.id ? 'You cannot deactivate your own account.' : ''} onClick={() => updateUser(user, { is_active: !user.is_active }, user.is_active ? 'Account deactivated.' : 'Account reactivated.')}>{user.is_active ? 'Deactivate' : 'Reactivate'}</button></div>
             </article>;
           })}</div> : <div className="admin-inline-state"><Users size={18} /><div><strong>No access accounts yet</strong><span>Create an account above to provide sign-in access.</span></div></div>}
-        </div>
-      </details>
+      </CollapsibleSection>
     </>}
 
-    <section className="admin-section admin-org-management">
-      <div className="admin-section-heading"><div><span className="admin-kicker">Organization settings</span><h3><Building2 size={19} /> Organization management</h3><p>Rename, change status, or create an organization.</p></div></div>
+    <CollapsibleSection
+      className="admin-org-management"
+      kicker="Organization settings"
+      icon={Building2}
+      title="Organization management"
+      description="Rename, change status, or create an organization."
+    >
       {selectedOrganization && <div className="admin-org-actions">
         <form onSubmit={saveOrganization}><label htmlFor="admin-org-name">Selected organization name</label><div className="admin-inline-form"><input id="admin-org-name" required value={rename} onChange={event => setRename(event.target.value)} /><button type="submit" disabled={saving || rename.trim() === selectedOrganization.name}><Check size={15} /> Save name</button></div></form>
         <div className="admin-status-control"><span>{selectedOrganization.is_active ? 'This organization is active.' : 'This organization is inactive.'}</span><button type="button" className={selectedOrganization.is_active ? 'admin-danger-button' : 'admin-primary-button'} disabled={saving} onClick={toggleOrganizationStatus}>{selectedOrganization.is_active ? 'Deactivate organization' : 'Reactivate organization'}</button></div>
       </div>}
       <form className="admin-new-org" onSubmit={createOrganization}><label htmlFor="admin-new-org">Create a separate organization</label><div className="admin-inline-form"><input id="admin-new-org" required placeholder="Organization name" value={newOrganization} onChange={event => setNewOrganization(event.target.value)} /><button className="admin-primary-button" type="submit" disabled={saving}><Plus size={16} /> Create organization</button></div></form>
-    </section>
+    </CollapsibleSection>
 
     {employeeToRemove && <div className="admin-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setEmployeeToRemove(null); }}><section className="admin-modal small" role="alertdialog" aria-modal="true" aria-labelledby="remove-employee-title" aria-describedby="remove-employee-description"><div className="admin-modal-heading"><div><span className="admin-kicker">Remove team member</span><h3 id="remove-employee-title">Remove {employeeToRemove.name}?</h3></div><button type="button" className="admin-icon-button" aria-label="Close" onClick={() => setEmployeeToRemove(null)} disabled={saving}><X size={18} /></button></div>
       <p className="admin-help" id="remove-employee-description">This permanently removes the employee, their scheduled shifts and zone skills from {selectedOrganization.name}. Any linked login will be unlinked.</p>

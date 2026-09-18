@@ -31,6 +31,12 @@ function response(data, status = 200) {
 }
 
 const visibleTeamNames = () => Array.from(document.querySelectorAll('.admin-employee strong')).map(node => node.textContent);
+const openSection = async name => {
+  const heading = await screen.findByRole('heading', { name });
+  const details = heading.closest('details');
+  if (!details.open) fireEvent.click(heading.closest('summary'));
+  return details;
+};
 
 describe('AdminPanel organization scope', () => {
   let fetchMock;
@@ -81,6 +87,39 @@ describe('AdminPanel organization scope', () => {
   });
 
   afterEach(() => fetchMock.mockRestore());
+
+  test('starts every admin card collapsed and lets sections open independently', async () => {
+    render(<AdminPanel />);
+    await screen.findByRole('heading', { name: 'Floor map rules' });
+    const details = Array.from(document.querySelectorAll('.admin-collapsible-section'));
+    expect(details).toHaveLength(5);
+    details.forEach(section => expect(section).not.toHaveAttribute('open'));
+
+    const kpi = await openSection('KPI workbook import');
+    const floorRules = await openSection('Floor map rules');
+    expect(kpi).toHaveAttribute('open');
+    expect(floorRules).toHaveAttribute('open');
+
+    fireEvent.click(within(kpi).getByRole('heading', { name: 'KPI workbook import' }).closest('summary'));
+    expect(kpi).not.toHaveAttribute('open');
+    expect(floorRules).toHaveAttribute('open');
+  });
+
+  test('supports keyboard toggling and preserves draft values while collapsed', async () => {
+    render(<AdminPanel />);
+    await screen.findByRole('option', { name: 'South Store' });
+    const organization = await screen.findByRole('heading', { name: 'Organization management' });
+    const summary = organization.closest('summary');
+    summary.focus();
+    await userEvent.keyboard('{Enter}');
+    const nameInput = screen.getByLabelText('Selected organization name');
+    fireEvent.change(nameInput, { target: { value: 'Draft Store Name' } });
+
+    fireEvent.click(summary);
+    await waitFor(() => expect(organization.closest('details')).not.toHaveAttribute('open'));
+    fireEvent.click(summary);
+    await waitFor(() => expect(screen.getByLabelText('Selected organization name')).toHaveValue('Draft Store Name'));
+  });
 
   test('switching organization reloads only that organization’s staff and accounts', async () => {
     render(<AdminPanel />);
@@ -142,6 +181,7 @@ describe('AdminPanel organization scope', () => {
   test('team search filters the currently selected organization', async () => {
     render(<AdminPanel />);
     await waitFor(() => expect(visibleTeamNames()).toEqual(['Alex Taylor', 'Bailey Jones']));
+    await openSection('Team');
     const search = screen.getByPlaceholderText('Search name, workbook, or job');
     await userEvent.type(search, 'Bailey');
 
@@ -150,7 +190,7 @@ describe('AdminPanel organization scope', () => {
 
   test('edits exact BOH times and saves the organization floor map rules', async () => {
     render(<AdminPanel />);
-    await screen.findByText('Floor map rules');
+    await openSection('Floor map rules');
 
     fireEvent.change(screen.getByLabelText('BOH start 1'), { target: { value: '13:30' } });
     fireEvent.click(screen.getByRole('button', { name: 'Remove BOH time 2' }));
@@ -177,6 +217,7 @@ describe('AdminPanel organization scope', () => {
 
   test('supports keyboard reordering of duplicate-aware priority cards', async () => {
     render(<AdminPanel />);
+    await openSection('Floor map rules');
     const firstHandle = await screen.findByRole('button', { name: 'Move WOMENS priority 1' });
 
     fireEvent.keyDown(firstHandle, { key: 'ArrowDown', code: 'ArrowDown', altKey: true });
@@ -195,6 +236,7 @@ describe('AdminPanel organization scope', () => {
   test('requires confirmation before removing an employee and refreshes the roster', async () => {
     render(<AdminPanel />);
     await waitFor(() => expect(visibleTeamNames()).toEqual(['Alex Taylor', 'Bailey Jones']));
+    await openSection('Team');
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove Alex Taylor' }));
     expect(screen.getByRole('alertdialog')).toHaveTextContent('scheduled shifts and zone skills');
@@ -216,6 +258,7 @@ describe('AdminPanel organization scope', () => {
 
   test('shows import metadata and uploads the selected organization’s two workbooks as multipart data', async () => {
     render(<AdminPanel />);
+    await openSection('KPI workbook import');
     expect(await screen.findByText('Two future dates have no actual values.')).toBeInTheDocument();
     expect(screen.getByText('Current FY 2026')).toBeInTheDocument();
     expect(screen.getByText('728 daily rows')).toBeInTheDocument();
