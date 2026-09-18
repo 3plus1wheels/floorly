@@ -87,7 +87,7 @@ function Hero() {
         <div className="flex flex-col gap-2">
           <p className="hero-anim text-sm font-data text-[#C9A84C] tracking-widest uppercase mb-4">Daily Retail Business Management</p>
           <h1 className="hero-anim text-[#FAF8F5] font-bold text-5xl md:text-7xl lg:text-8xl tracking-tight leading-[0.9]">
-            RETAIL EXCELLENCE <span className="font-normal font-drama block mt-2 italic text-[#C9A84C]">Tactical Precision.</span>
+            RETAIL EXCELLENCE <span className="font-normal font-drama block mt-2 italic text-[#C9A84C]"></span>
           </h1>
           <p className="hero-anim text-[#FAF8F5]/80 text-lg md:text-xl max-w-xl mt-6">
             Zone associates based on skill level. Eradicate retail guesswork. Establish a daily operational pulse for peak store performance.
@@ -413,7 +413,6 @@ function Footer() {
 
       <div className="max-w-6xl mx-auto pt-8 border-t border-[#FAF8F5]/10 flex flex-col md:flex-row justify-between items-center text-xs text-[#FAF8F5]/40 font-data uppercase tracking-widest gap-4">
         <p>&copy; {new Date().getFullYear()} Floorly Systems. All rights strict.</p>
-        <p>Tactical Precision Edition</p>
       </div>
     </footer>
   );
