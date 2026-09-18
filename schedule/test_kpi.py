@@ -222,6 +222,83 @@ class KpiImportAndStateApiTests(TestCase):
         self.assertEqual(history.data[0]['id'], response.data['id'])
         self.assertEqual(history.data[0]['imported_by']['username'], self.admin.username)
 
+    def test_current_workbook_can_be_imported_alone_without_replacing_prior_year(self):
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.import_pair().status_code, 201)
+        prior_record = KpiDailyRecord.objects.get(
+            organization=self.organization, business_date=date(2025, 9, 15),
+        )
+        prior_batch_id = prior_record.import_batch_id
+        prior_sales = prior_record.sales
+
+        response = self.client.post(
+            self.import_url,
+            {'current_year_file': upload('current-only.xlsx', tracker_bytes(2026, target=22222))},
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['current_fiscal_year'], 2026)
+        self.assertIsNone(response.data['prior_fiscal_year'])
+        self.assertEqual(response.data['prior_filename'], '')
+        self.assertEqual(response.data['daily_records_imported'], 364)
+        self.assertEqual(KpiDailyRecord.objects.filter(organization=self.organization).count(), 728)
+        preserved_prior = KpiDailyRecord.objects.get(
+            organization=self.organization, business_date=date(2025, 9, 15),
+        )
+        self.assertEqual(preserved_prior.import_batch_id, prior_batch_id)
+        self.assertEqual(preserved_prior.sales, prior_sales)
+        self.assertEqual(
+            KpiDailyRecord.objects.get(
+                organization=self.organization, business_date=date(2026, 9, 14),
+            ).day_target,
+            Decimal('22222'),
+        )
+
+    def test_prior_workbook_can_be_imported_alone_without_replacing_current_year(self):
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.import_pair(target=13750).status_code, 201)
+        current_record = KpiDailyRecord.objects.get(
+            organization=self.organization, business_date=date(2026, 9, 14),
+        )
+        current_batch_id = current_record.import_batch_id
+
+        response = self.client.post(
+            self.import_url,
+            {
+                'prior_year_file': upload(
+                    'prior-only.xlsx',
+                    tracker_bytes(2025, prior_metrics={'2025-09-15': {'sales': 7777}}),
+                ),
+            },
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertIsNone(response.data['current_fiscal_year'])
+        self.assertEqual(response.data['prior_fiscal_year'], 2025)
+        self.assertEqual(response.data['current_filename'], '')
+        self.assertEqual(response.data['daily_records_imported'], 364)
+        self.assertEqual(KpiDailyRecord.objects.filter(organization=self.organization).count(), 728)
+        preserved_current = KpiDailyRecord.objects.get(
+            organization=self.organization, business_date=date(2026, 9, 14),
+        )
+        self.assertEqual(preserved_current.import_batch_id, current_batch_id)
+        self.assertEqual(preserved_current.day_target, Decimal('13750'))
+        self.assertEqual(
+            KpiDailyRecord.objects.get(
+                organization=self.organization, business_date=date(2025, 9, 15),
+            ).sales,
+            Decimal('7777'),
+        )
+
+    def test_import_requires_at_least_one_workbook(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(self.import_url, {}, format='multipart')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['error'], 'Select at least one fiscal-year workbook to upload.')
+        self.assertFalse(KpiImportBatch.objects.exists())
+
     def test_reversed_years_roll_back_without_replacing_active_rows(self):
         self.client.force_authenticate(self.admin)
         first = self.import_pair()

@@ -330,4 +330,38 @@ describe('AdminPanel organization scope', () => {
     expect(options.headers).not.toHaveProperty('Content-Type');
     expect(await screen.findByText('KPI workbooks imported. Workbook goals now use the refreshed data.')).toBeInTheDocument();
   });
+
+  test('allows a current fiscal year workbook to be uploaded by itself', async () => {
+    render(<AdminPanel />);
+    await openSection('KPI workbook import');
+    const initialButton = screen.getByRole('button', { name: 'Select a workbook' });
+    expect(initialButton).toBeDisabled();
+
+    const currentFile = new File(['current'], 'FY2026.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    fireEvent.change(screen.getByLabelText('Current fiscal year workbook'), { target: { files: [currentFile] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload current workbook' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/admin/organizations/1/kpi-imports/'), expect.objectContaining({ method: 'POST' })));
+    const [, options] = fetchMock.mock.calls.find(([requestUrl, requestOptions]) =>
+      String(requestUrl).includes('/kpi-imports/') && requestOptions?.method === 'POST');
+    expect(options.body.get('current_year_file')).toBe(currentFile);
+    expect(options.body.get('prior_year_file')).toBeNull();
+    expect(await screen.findByText('KPI workbook imported. Workbook goals now use the refreshed data.')).toBeInTheDocument();
+  });
+
+  test('allows a prior fiscal year workbook to be uploaded by itself', async () => {
+    render(<AdminPanel />);
+    await openSection('KPI workbook import');
+    const priorFile = new File(['prior'], 'FY2025.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    fireEvent.change(screen.getByLabelText('Prior fiscal year workbook'), { target: { files: [priorFile] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload prior workbook' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/admin/organizations/1/kpi-imports/'), expect.objectContaining({ method: 'POST' })));
+    const [, options] = fetchMock.mock.calls.find(([requestUrl, requestOptions]) =>
+      String(requestUrl).includes('/kpi-imports/') && requestOptions?.method === 'POST');
+    expect(options.body.get('current_year_file')).toBeNull();
+    expect(options.body.get('prior_year_file')).toBe(priorFile);
+  });
 });

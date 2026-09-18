@@ -339,18 +339,19 @@ export default function AdminPanel({ onOrganizationsChanged }) {
 
   const uploadKpiWorkbooks = async event => {
     event.preventDefault();
-    if (!selectedOrganization || !currentKpiFile || !priorKpiFile) return;
+    if (!selectedOrganization || (!currentKpiFile && !priorKpiFile)) return;
+    const uploadingBoth = Boolean(currentKpiFile && priorKpiFile);
     setKpiUploading(true); setKpiImportError(''); setError(''); setNotice('');
     try {
       const body = new FormData();
-      body.append('current_year_file', currentKpiFile);
-      body.append('prior_year_file', priorKpiFile);
+      if (currentKpiFile) body.append('current_year_file', currentKpiFile);
+      if (priorKpiFile) body.append('prior_year_file', priorKpiFile);
       const result = await request(`/api/admin/organizations/${encodeURIComponent(selectedOrganization.id)}/kpi-imports/`, { method: 'POST', body });
       setKpiImport(latestImportFrom(result));
       setCurrentKpiFile(null); setPriorKpiFile(null); setKpiFileInputKey(value => value + 1);
       await request(`/api/admin/organizations/${encodeURIComponent(selectedOrganization.id)}/kpi-imports/`)
         .then(data => setKpiImport(latestImportFrom(data)));
-      setNotice('KPI workbooks imported. Workbook goals now use the refreshed data.');
+      setNotice(`${uploadingBoth ? 'KPI workbooks' : 'KPI workbook'} imported. Workbook goals now use the refreshed data.`);
     } catch (err) { setKpiImportError(err.message); }
     finally { setKpiUploading(false); }
   };
@@ -527,15 +528,20 @@ export default function AdminPanel({ onOrganizationsChanged }) {
         kicker="Workbook data"
         icon={FileSpreadsheet}
         title="KPI workbook import"
-        description={`Upload both fiscal-year workbooks for ${selectedOrganization.name}.`}
+        description={`Upload either fiscal-year workbook for ${selectedOrganization.name}, or select both.`}
       >
-        <p className="admin-kpi-replacement-note">A valid import replaces this organization’s normalized KPI data for both years. Original workbook files are not retained; filenames and import audit metadata remain. Saved daily overrides stay in place.</p>
+        <p className="admin-kpi-replacement-note">Each valid workbook replaces this organization’s normalized KPI data only for its detected fiscal year. Select both to validate and replace the pair together. Original files are not retained; filenames and import audit metadata remain. Saved daily overrides stay in place.</p>
         <form className="admin-kpi-upload-form" onSubmit={uploadKpiWorkbooks}>
           <label>Current fiscal year workbook (.xlsx)<input key={`current-${kpiFileInputKey}`} aria-label="Current fiscal year workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => setCurrentKpiFile(event.target.files?.[0] || null)} /></label>
           <label>Prior fiscal year workbook (.xlsx)<input key={`prior-${kpiFileInputKey}`} aria-label="Prior fiscal year workbook" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => setPriorKpiFile(event.target.files?.[0] || null)} /></label>
-          <button type="submit" className="admin-primary-button" disabled={kpiUploading || !currentKpiFile || !priorKpiFile}><Upload size={15} />{kpiUploading ? 'Uploading workbooks…' : 'Upload both workbooks'}</button>
+          <button type="submit" className="admin-primary-button" disabled={kpiUploading || (!currentKpiFile && !priorKpiFile)}><Upload size={15} />{
+            kpiUploading ? (currentKpiFile && priorKpiFile ? 'Uploading workbooks…' : 'Uploading workbook…')
+              : currentKpiFile && priorKpiFile ? 'Upload both workbooks'
+                : currentKpiFile ? 'Upload current workbook'
+                  : priorKpiFile ? 'Upload prior workbook' : 'Select a workbook'
+          }</button>
         </form>
-        {kpiUploading && <div className="admin-kpi-progress" role="status"><LoaderCircle className="admin-spinner" /> Uploading and validating both workbooks…<span /></div>}
+        {kpiUploading && <div className="admin-kpi-progress" role="status"><LoaderCircle className="admin-spinner" /> Uploading and validating {currentKpiFile && priorKpiFile ? 'both workbooks' : 'workbook'}…<span /></div>}
         {kpiImportError && <div className="admin-kpi-import-error" role="alert"><AlertTriangle size={16} />{kpiImportError}</div>}
         <div className="admin-kpi-latest" aria-live="polite">
           <div className="admin-kpi-latest-heading"><strong>Latest import</strong>{kpiImportLoading && <LoaderCircle className="admin-spinner" aria-label="Loading latest import" />}</div>
@@ -546,7 +552,7 @@ export default function AdminPanel({ onOrganizationsChanged }) {
               {(kpiImport.current_fiscal_year || kpiImport.current_year || kpiImport.detected_current_fy) && <span>Current FY {kpiImport.current_fiscal_year || kpiImport.current_year || kpiImport.detected_current_fy}</span>}
               {(kpiImport.prior_fiscal_year || kpiImport.prior_year || kpiImport.detected_prior_fy) && <span>Prior FY {kpiImport.prior_fiscal_year || kpiImport.prior_year || kpiImport.detected_prior_fy}</span>}
               {(kpiImport.imported_at || kpiImport.created_at || kpiImport.uploaded_at || kpiImport.timestamp) && <span>{displayDate(kpiImport.imported_at || kpiImport.created_at || kpiImport.uploaded_at || kpiImport.timestamp)}</span>}
-              {(kpiImport.current_filename || kpiImport.prior_filename) && <span>{kpiImport.current_filename || 'Current workbook'} + {kpiImport.prior_filename || 'prior workbook'}</span>}
+              {(kpiImport.current_filename || kpiImport.prior_filename) && <span>{[kpiImport.current_filename, kpiImport.prior_filename].filter(Boolean).join(' + ')}</span>}
               {kpiImport.imported_by && <span>Uploaded by {typeof kpiImport.imported_by === 'object' ? (kpiImport.imported_by.full_name || kpiImport.imported_by.username || kpiImport.imported_by.id) : kpiImport.imported_by}</span>}
               {(kpiImport.daily_records_imported ?? kpiImport.daily_records) != null && <span>{kpiImport.daily_records_imported ?? kpiImport.daily_records} daily rows</span>}
               {(kpiImport.period_records_imported ?? kpiImport.period_records) != null && <span>{kpiImport.period_records_imported ?? kpiImport.period_records} period rows</span>}

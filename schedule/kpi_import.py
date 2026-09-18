@@ -329,9 +329,7 @@ def _slot_set(parsed):
     }
 
 
-def import_kpi_pair(organization, current_upload, prior_upload, user):
-    current = _parse_workbook(current_upload)
-    prior = _parse_workbook(prior_upload)
+def _validate_pair(current, prior):
     if current.fiscal_year != prior.fiscal_year + 1:
         raise KpiImportError(
             f'Expected consecutive fiscal years; received FY{current.fiscal_year} and FY{prior.fiscal_year}.',
@@ -343,36 +341,57 @@ def import_kpi_pair(organization, current_upload, prior_upload, user):
     if any((current_dates[key] - prior_dates[key]).days != 364 for key in current_dates):
         raise KpiImportError('Workbook fiscal calendars are not aligned to a 364-day retail comparison.')
 
-    warnings = (current.warnings + prior.warnings)[:200]
+
+def import_kpi_workbooks(organization, *, current_upload=None, prior_upload=None, user=None):
+    if current_upload is None and prior_upload is None:
+        raise KpiImportError('Select at least one fiscal-year workbook to upload.')
+
+    current = _parse_workbook(current_upload) if current_upload is not None else None
+    prior = _parse_workbook(prior_upload) if prior_upload is not None else None
+    if current is not None and prior is not None:
+        _validate_pair(current, prior)
+
+    parsed_workbooks = [parsed for parsed in (prior, current) if parsed is not None]
+    warnings = [warning for parsed in parsed_workbooks for warning in parsed.warnings][:200]
     with transaction.atomic():
         batch = KpiImportBatch.objects.create(
             organization=organization,
-            current_fiscal_year=current.fiscal_year,
-            prior_fiscal_year=prior.fiscal_year,
-            current_filename=current.name,
-            prior_filename=prior.name,
-            current_size=current.size,
-            prior_size=prior.size,
-            current_sha256=current.sha256,
-            prior_sha256=prior.sha256,
-            daily_records_imported=len(current.days) + len(prior.days),
-            period_records_imported=len(current.periods) + len(prior.periods),
+            current_fiscal_year=current.fiscal_year if current else None,
+            prior_fiscal_year=prior.fiscal_year if prior else None,
+            current_filename=current.name if current else '',
+            prior_filename=prior.name if prior else '',
+            current_size=current.size if current else None,
+            prior_size=prior.size if prior else None,
+            current_sha256=current.sha256 if current else '',
+            prior_sha256=prior.sha256 if prior else '',
+            daily_records_imported=sum(len(parsed.days) for parsed in parsed_workbooks),
+            period_records_imported=sum(len(parsed.periods) for parsed in parsed_workbooks),
             warnings=warnings,
             status=KpiImportBatch.STATUS_WARNINGS if warnings else KpiImportBatch.STATUS_COMPLETED,
             imported_by=user,
         )
-        years = [current.fiscal_year, prior.fiscal_year]
+        years = [parsed.fiscal_year for parsed in parsed_workbooks]
         KpiDailyRecord.objects.filter(organization=organization, fiscal_year__in=years).delete()
         KpiPeriodRecord.objects.filter(organization=organization, fiscal_year__in=years).delete()
         KpiDailyRecord.objects.bulk_create([
             KpiDailyRecord(organization=organization, import_batch=batch, **day)
-            for parsed in (prior, current) for day in parsed.days
+            for parsed in parsed_workbooks for day in parsed.days
         ])
         KpiPeriodRecord.objects.bulk_create([
             KpiPeriodRecord(organization=organization, import_batch=batch, **period)
-            for parsed in (prior, current) for period in parsed.periods
+            for parsed in parsed_workbooks for period in parsed.periods
         ])
     return batch
+
+
+def import_kpi_pair(organization, current_upload, prior_upload, user):
+    """Compatibility wrapper for callers that always provide both workbooks."""
+    return import_kpi_workbooks(
+        organization,
+        current_upload=current_upload,
+        prior_upload=prior_upload,
+        user=user,
+    )
 
 
 def serialize_import_batch(batch):

@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from schedule.kpi_import import KpiImportError, import_kpi_pair, serialize_import_batch
+from schedule.kpi_import import KpiImportError, import_kpi_workbooks, serialize_import_batch
 from schedule.models import KpiImportBatch
 
 from .models import Organization
@@ -22,13 +22,18 @@ class AdminKpiImportView(APIView):
         organization = get_object_or_404(Organization, pk=organization_id)
         current_file = request.FILES.get('current_year_file')
         prior_file = request.FILES.get('prior_year_file')
-        if current_file is None or prior_file is None:
+        if current_file is None and prior_file is None:
             return Response(
-                {'error': 'Both current_year_file and prior_year_file are required.'},
+                {'error': 'Select at least one fiscal-year workbook to upload.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            batch = import_kpi_pair(organization, current_file, prior_file, request.user)
+            batch = import_kpi_workbooks(
+                organization,
+                current_upload=current_file,
+                prior_upload=prior_file,
+                user=request.user,
+            )
         except KpiImportError as exc:
             return Response(
                 {'code': 'invalid_kpi_workbooks', 'error': str(exc)},
