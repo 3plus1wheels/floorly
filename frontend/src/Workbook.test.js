@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import Workbook from './Workbook';
 
 let mockSelectedOrg = '41';
@@ -225,7 +225,7 @@ describe('Workbook KPI persistence', () => {
     expect(screen.getByRole('option', { name: 'Print Fit: Fit More' })).toBeInTheDocument();
   });
 
-  test('selects one cell, saves its shared zone, and clears it with Delete', async () => {
+  test('checks cells, saves their shared zone, and clears them with Delete', async () => {
     let savedOverrides = [];
     const zoneRequests = [];
     fetchMock.mockImplementation(async (url, options = {}) => {
@@ -256,30 +256,33 @@ describe('Workbook KPI persistence', () => {
     });
 
     render(<Workbook />);
-    const alexNine = (await screen.findAllByRole('gridcell', { name: 'WOMENS' }))[0];
-    fireEvent.pointerDown(alexNine, { button: 0, pointerType: 'mouse' });
-    fireEvent.pointerUp(document);
+    const alexNine = await screen.findByRole('checkbox', { name: 'Select ALEX, 9am-10am' });
+    const blairTen = screen.getByRole('checkbox', { name: 'Select BLAIR, 10am-11am' });
+    fireEvent.click(alexNine);
+    fireEvent.click(blairTen);
 
     const cash = screen.getByRole('button', { name: 'CASH' });
-    await waitFor(() => expect(cash).toHaveAttribute('title', 'Assign CASH to 1 selected cell'));
+    await waitFor(() => expect(cash).toHaveAttribute('title', 'Assign CASH to 2 checked cells'));
     fireEvent.click(cash);
     await waitFor(() => expect(zoneRequests).toHaveLength(1));
     expect(zoneRequests[0]).toEqual({
       set: {
         zone: 'CASH',
-        cells: [{ shift_id: 101, hour: 9 }],
+        cells: [{ shift_id: 101, hour: 9 }, { shift_id: 102, hour: 10 }],
       },
     });
-    expect(screen.getAllByRole('gridcell', { name: 'CASH' })).toHaveLength(1);
+    expect(screen.getAllByRole('gridcell', { name: 'CASH' })).toHaveLength(2);
 
     await waitFor(() => expect(cash).not.toBeDisabled());
-    fireEvent.keyDown(alexNine, { key: 'Delete' });
+    fireEvent.keyDown(blairTen, { key: 'Delete' });
     await waitFor(() => expect(zoneRequests).toHaveLength(2));
-    expect(zoneRequests[1].clear.cells).toEqual([{ shift_id: 101, hour: 9 }]);
+    expect(zoneRequests[1].clear.cells).toEqual([
+      { shift_id: 101, hour: 9 }, { shift_id: 102, hour: 10 },
+    ]);
     await waitFor(() => expect(screen.queryAllByRole('gridcell', { name: 'CASH' })).toHaveLength(0));
   });
 
-  test('moves the single-cell selection with the keyboard and focuses the palette with Enter', async () => {
+  test('moves between cell checkboxes with the keyboard and focuses the palette with Enter', async () => {
     fetchMock.mockImplementation(async (url) => {
       const parsed = new URL(String(url), 'http://localhost');
       if (parsed.pathname === '/api/schedule/workbook/') {
@@ -293,13 +296,14 @@ describe('Workbook KPI persistence', () => {
     });
 
     render(<Workbook />);
-    const first = await screen.findByRole('gridcell', { name: 'WOMENS' });
-    fireEvent.focus(first);
-    await waitFor(() => expect(first).toHaveAttribute('aria-selected', 'true'));
-    fireEvent.keyDown(first, { key: 'ArrowRight', shiftKey: true });
-    const second = screen.getByRole('gridcell', { name: 'MENS' });
-    await waitFor(() => expect(second).toHaveAttribute('aria-selected', 'true'));
-    expect(first).toHaveAttribute('aria-selected', 'false');
+    const first = await screen.findByRole('checkbox', { name: 'Select ALEX, 9am-10am' });
+    act(() => first.focus());
+    await waitFor(() => expect(first).toHaveFocus());
+    fireEvent.keyDown(first, { key: 'ArrowRight' });
+    const second = screen.getByRole('checkbox', { name: 'Select ALEX, 10am-11am' });
+    await waitFor(() => expect(second).toHaveFocus());
+    fireEvent.click(second);
+    expect(second).toBeChecked();
     fireEvent.keyDown(second, { key: 'Enter' });
     expect(screen.getByRole('button', { name: 'WOMENS' })).toHaveFocus();
   });
@@ -321,12 +325,11 @@ describe('Workbook KPI persistence', () => {
     });
 
     render(<Workbook />);
-    const cell = await screen.findByRole('gridcell', { name: 'WOMENS' });
-    fireEvent.pointerDown(cell, { button: 0, pointerType: 'mouse' });
-    fireEvent.pointerUp(document);
+    const checkbox = await screen.findByRole('checkbox', { name: 'Select ALEX, 9am-10am' });
+    fireEvent.click(checkbox);
     fireEvent.click(screen.getByRole('button', { name: 'CASH' }));
 
     expect(await screen.findByText(/Zone save rejected\. Your previous saved assignments were restored\./)).toBeInTheDocument();
-    expect(screen.getByRole('gridcell', { name: 'WOMENS' })).toHaveAttribute('aria-selected', 'true');
+    expect(checkbox).toBeChecked();
   });
 });
