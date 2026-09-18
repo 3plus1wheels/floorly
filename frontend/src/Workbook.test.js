@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import Workbook from './Workbook';
 
 let mockSelectedOrg = '41';
@@ -225,7 +225,7 @@ describe('Workbook KPI persistence', () => {
     expect(screen.getByRole('option', { name: 'Print Fit: Fit More' })).toBeInTheDocument();
   });
 
-  test('checks cells, saves their shared zone, and clears them with Delete', async () => {
+  test('saves a zone from its cell dropdown and restores automatic zoning', async () => {
     let savedOverrides = [];
     const zoneRequests = [];
     fetchMock.mockImplementation(async (url, options = {}) => {
@@ -256,33 +256,26 @@ describe('Workbook KPI persistence', () => {
     });
 
     render(<Workbook />);
-    const alexNine = await screen.findByRole('checkbox', { name: 'Select ALEX, 9am-10am' });
-    const blairTen = screen.getByRole('checkbox', { name: 'Select BLAIR, 10am-11am' });
-    fireEvent.click(alexNine);
-    fireEvent.click(blairTen);
-
-    const cash = screen.getByRole('button', { name: 'CASH' });
-    await waitFor(() => expect(cash).toHaveAttribute('title', 'Assign CASH to 2 checked cells'));
-    fireEvent.click(cash);
+    const alexNine = await screen.findByRole('combobox', { name: 'Zone for ALEX, 9am-10am' });
+    expect(alexNine).toHaveValue('');
+    fireEvent.change(alexNine, { target: { value: 'CASH' } });
     await waitFor(() => expect(zoneRequests).toHaveLength(1));
     expect(zoneRequests[0]).toEqual({
       set: {
         zone: 'CASH',
-        cells: [{ shift_id: 101, hour: 9 }, { shift_id: 102, hour: 10 }],
+        cells: [{ shift_id: 101, hour: 9 }],
       },
     });
-    expect(screen.getAllByRole('gridcell', { name: 'CASH' })).toHaveLength(2);
+    expect(screen.getAllByRole('gridcell', { name: 'CASH' })).toHaveLength(1);
 
-    await waitFor(() => expect(cash).not.toBeDisabled());
-    fireEvent.keyDown(blairTen, { key: 'Delete' });
+    await waitFor(() => expect(alexNine).not.toBeDisabled());
+    fireEvent.change(alexNine, { target: { value: '' } });
     await waitFor(() => expect(zoneRequests).toHaveLength(2));
-    expect(zoneRequests[1].clear.cells).toEqual([
-      { shift_id: 101, hour: 9 }, { shift_id: 102, hour: 10 },
-    ]);
+    expect(zoneRequests[1].clear.cells).toEqual([{ shift_id: 101, hour: 9 }]);
     await waitFor(() => expect(screen.queryAllByRole('gridcell', { name: 'CASH' })).toHaveLength(0));
   });
 
-  test('moves between cell checkboxes with the keyboard and focuses the palette with Enter', async () => {
+  test('provides an accessible dropdown for every active cell and none for blank cells', async () => {
     fetchMock.mockImplementation(async (url) => {
       const parsed = new URL(String(url), 'http://localhost');
       if (parsed.pathname === '/api/schedule/workbook/') {
@@ -296,16 +289,13 @@ describe('Workbook KPI persistence', () => {
     });
 
     render(<Workbook />);
-    const first = await screen.findByRole('checkbox', { name: 'Select ALEX, 9am-10am' });
-    act(() => first.focus());
-    await waitFor(() => expect(first).toHaveFocus());
-    fireEvent.keyDown(first, { key: 'ArrowRight' });
-    const second = screen.getByRole('checkbox', { name: 'Select ALEX, 10am-11am' });
-    await waitFor(() => expect(second).toHaveFocus());
-    fireEvent.click(second);
-    expect(second).toBeChecked();
-    fireEvent.keyDown(second, { key: 'Enter' });
-    expect(screen.getByRole('button', { name: 'WOMENS' })).toHaveFocus();
+    const first = await screen.findByRole('combobox', { name: 'Zone for ALEX, 9am-10am' });
+    const second = screen.getByRole('combobox', { name: 'Zone for ALEX, 10am-11am' });
+    expect(first).toHaveValue('');
+    expect(second).toHaveValue('');
+    expect(screen.getAllByRole('combobox', { name: /^Zone for/ })).toHaveLength(2);
+    expect(within(first).getByRole('option', { name: 'WOMENS (AUTO)' })).toBeInTheDocument();
+    expect(within(second).getByRole('option', { name: 'MENS (AUTO)' })).toBeInTheDocument();
   });
 
   test('restores saved zone state and keeps the selection when a zone save fails', async () => {
@@ -325,11 +315,10 @@ describe('Workbook KPI persistence', () => {
     });
 
     render(<Workbook />);
-    const checkbox = await screen.findByRole('checkbox', { name: 'Select ALEX, 9am-10am' });
-    fireEvent.click(checkbox);
-    fireEvent.click(screen.getByRole('button', { name: 'CASH' }));
+    const dropdown = await screen.findByRole('combobox', { name: 'Zone for ALEX, 9am-10am' });
+    fireEvent.change(dropdown, { target: { value: 'CASH' } });
 
     expect(await screen.findByText(/Zone save rejected\. Your previous saved assignments were restored\./)).toBeInTheDocument();
-    expect(checkbox).toBeChecked();
+    expect(dropdown).toHaveValue('');
   });
 });
