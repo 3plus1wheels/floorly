@@ -80,7 +80,7 @@ class ScheduleSyncTests(TestCase):
         self.assertEqual(response.data['range_start'], '2026-09-07')
         self.assertEqual(response.data['range_end'], '2026-09-13')
 
-    def test_exact_closing_shift_is_boh_even_when_kronos_sends_another_role(self):
+    def test_import_preserves_source_role_for_configured_boh_time(self):
         self.payload['weeks'] = [{
             **self.payload['weeks'][0],
             'shifts': [{
@@ -93,12 +93,15 @@ class ScheduleSyncTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         imported = Shift.objects.get(employee__name='Closing Stylist')
-        self.assertEqual(imported.role, 'BOH')
+        self.assertEqual(imported.role, 'CEL')
 
-    def test_exact_closing_shift_is_boh_even_when_xlsx_role_says_cel(self):
+        workbook = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        self.assertEqual(workbook.data['rows'][0]['role'], 'BOH')
+
+    def test_parser_preserves_source_role_for_configured_boh_time(self):
         self.assertEqual(
             _normalize_role('CEL', time(16, 30), time(21, 15), primary_job='Management'),
-            'BOH',
+            'CEL',
         )
 
     def test_rejects_malformed_incomplete_and_empty_payloads(self):
@@ -352,6 +355,63 @@ class ScheduleSyncTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['rows'][0]['role'], 'BOH')
         self.assertEqual(set(response.data['rows'][0]['zones'].values()), {'BOH'})
+
+    def test_two_to_six_forty_five_is_boh_by_default(self):
+        employee = Employee.objects.create(organization=self.organization, name='Jessar')
+        Shift.objects.create(
+            employee=employee, date=date(2026, 9, 7), start_time=time(14),
+            end_time=time(18, 45), role='Stylist')
+
+        response = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+
+        self.assertEqual(response.data['rows'][0]['role'], 'BOH')
+        self.assertEqual(set(response.data['rows'][0]['zones'].values()), {'BOH'})
+
+    def test_removing_boh_rule_restores_source_role_without_reimport(self):
+        employee = Employee.objects.create(organization=self.organization, name='Jessar')
+        Shift.objects.create(
+            employee=employee, date=date(2026, 9, 7), start_time=time(14),
+            end_time=time(18, 45), role='Stylist')
+        StaffZone.objects.create(employee=employee, womens=3)
+        self.organization.boh_shift_times = []
+        self.organization.save(update_fields=['boh_shift_times'])
+
+        response = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+
+        self.assertEqual(response.data['rows'][0]['role'], 'Stylist')
+        self.assertEqual(set(response.data['rows'][0]['zones'].values()), {'WOMENS'})
+
+    def test_boh_rules_are_organization_specific(self):
+        other = Organization.objects.create(name='Other Store', boh_shift_times=[])
+        for organization, name in ((self.organization, 'Configured'), (other, 'Unconfigured')):
+            employee = Employee.objects.create(organization=organization, name=name)
+            Shift.objects.create(
+                employee=employee, date=date(2026, 9, 7), start_time=time(14),
+                end_time=time(18, 45), role='Stylist')
+            StaffZone.objects.create(employee=employee, womens=3)
+
+        configured = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        self.assertEqual(configured.data['rows'][0]['role'], 'BOH')
+        self.client.credentials(HTTP_X_ORGANIZATION_ID=str(other.id))
+        OrganizationMembership.objects.create(user=self.user, organization=other)
+        unconfigured = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        self.assertEqual(unconfigured.data['rows'][0]['role'], 'Stylist')
+
+    def test_custom_zone_priority_changes_first_stylist_slot(self):
+        self.organization.zone_priority = [
+            'CASH', 'MENS', 'FITS', 'WOMENS', 'FITS',
+            'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS',
+        ]
+        self.organization.save(update_fields=['zone_priority'])
+        employee = Employee.objects.create(organization=self.organization, name='Cash First')
+        Shift.objects.create(
+            employee=employee, date=date(2026, 9, 7), start_time=time(10),
+            end_time=time(11), role='Stylist')
+        StaffZone.objects.create(employee=employee, cash=3)
+
+        response = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+
+        self.assertEqual(response.data['rows'][0]['zones']['10'], 'CASH')
 
     def test_explicit_workbook_name_is_uppercased_and_survives_schedule_sync(self):
         self.assertEqual(self.post().status_code, 200)
@@ -858,6 +918,19 @@ class WorkbookZoneOverrideTests(TestCase):
         self.assertEqual(row['shift_id'], self.shift.id)
         self.assertEqual(row['zones']['9'], 'WOMENS')
         self.assertEqual(row['zone_overrides'], {'9': 'CASH', '10': 'CASH'})
+
+    def test_manual_override_remains_visible_over_generated_boh(self):
+        self.shift.start_time = time(14)
+        self.shift.end_time = time(18, 45)
+        self.shift.save(update_fields=['start_time', 'end_time'])
+        WorkbookZoneOverride.objects.create(
+            shift=self.shift, hour=14, zone='CASH', last_edited_by=self.user)
+
+        workbook = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+
+        row = workbook.data['rows'][0]
+        self.assertEqual(row['zones']['14'], 'BOH')
+        self.assertEqual(row['zone_overrides']['14'], 'CASH')
 
     def test_selected_clear_and_whole_day_reset_restore_generated_zones(self):
         for hour in (9, 10):

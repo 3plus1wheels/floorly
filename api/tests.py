@@ -1,7 +1,10 @@
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from .models import Organization, OrganizationMembership, UserProfile
+from .models import (
+    DEFAULT_BOH_SHIFT_TIMES, DEFAULT_ZONE_PRIORITY, Organization,
+    OrganizationMembership, UserProfile,
+)
 
 User = get_user_model()
 
@@ -58,6 +61,8 @@ class AdminApiTests(APITestCase):
     def test_admin_can_create_list_and_deactivate_organization(self):
         created = self.client.post('/api/admin/organizations/', {'name': 'North Store'}, format='json')
         self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.data['boh_shift_times'], DEFAULT_BOH_SHIFT_TIMES)
+        self.assertEqual(created.data['zone_priority'], DEFAULT_ZONE_PRIORITY)
         listed = self.client.get('/api/admin/organizations/')
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.data[0]['member_count'], 0)
@@ -65,6 +70,46 @@ class AdminApiTests(APITestCase):
             f"/api/admin/organizations/{created.data['id']}/", {'is_active': False}, format='json')
         self.assertEqual(deactivated.status_code, 200)
         self.assertFalse(Organization.objects.get(pk=created.data['id']).is_active)
+
+    def test_admin_can_update_floor_map_rules(self):
+        organization = Organization.objects.create(name='Rules Store')
+        priority = [
+            'CASH', 'WOMENS', 'MENS', 'FITS', 'FITS',
+            'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS',
+        ]
+
+        response = self.client.patch(f'/api/admin/organizations/{organization.id}/', {
+            'boh_shift_times': [{'start': '13:30', 'end': '18:00'}],
+            'zone_priority': priority,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        organization.refresh_from_db()
+        self.assertEqual(organization.boh_shift_times, [{'start': '13:30', 'end': '18:00'}])
+        self.assertEqual(organization.zone_priority, priority)
+
+    def test_floor_map_rule_validation_rejects_bad_times_and_zone_slots(self):
+        organization = Organization.objects.create(name='Rules Store')
+        invalid_payloads = [
+            {'boh_shift_times': [{'start': '2:00', 'end': '18:45'}]},
+            {'boh_shift_times': [{'start': '18:45', 'end': '14:00'}]},
+            {'boh_shift_times': [
+                {'start': '14:00', 'end': '18:45'},
+                {'start': '14:00', 'end': '18:45'},
+            ]},
+            {'zone_priority': DEFAULT_ZONE_PRIORITY[:-1]},
+            {'zone_priority': [{}, *DEFAULT_ZONE_PRIORITY[1:]]},
+        ]
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                response = self.client.patch(
+                    f'/api/admin/organizations/{organization.id}/', payload, format='json')
+                self.assertEqual(response.status_code, 400)
+
+        organization.refresh_from_db()
+        self.assertEqual(organization.boh_shift_times, DEFAULT_BOH_SHIFT_TIMES)
+        self.assertEqual(organization.zone_priority, DEFAULT_ZONE_PRIORITY)
 
     def test_admin_provisions_user_with_memberships_and_forced_password_change(self):
         first = Organization.objects.create(name='First Store')

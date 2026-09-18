@@ -1,9 +1,12 @@
+from collections import Counter
+import re
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
 from rest_framework import serializers
 
-from .models import Organization, OrganizationMembership, ThemePreference, UserProfile
+from .models import DEFAULT_ZONE_PRIORITY, Organization, OrganizationMembership, ThemePreference, UserProfile
 
 User = get_user_model()
 
@@ -34,8 +37,37 @@ class OrganizationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Organization
-        fields = ('id', 'name', 'is_active', 'member_count', 'created_at', 'updated_at')
+        fields = ('id', 'name', 'is_active', 'member_count', 'boh_shift_times', 'zone_priority', 'created_at', 'updated_at')
         read_only_fields = ('created_at', 'updated_at')
+
+    def validate_boh_shift_times(self, value):
+        if not isinstance(value, list) or len(value) > 20:
+            raise serializers.ValidationError('Must be a list of no more than 20 shift times.')
+        clean = []
+        seen = set()
+        for item in value:
+            if not isinstance(item, dict) or set(item) != {'start', 'end'}:
+                raise serializers.ValidationError('Each BOH rule needs only start and end values.')
+            start, end = item.get('start'), item.get('end')
+            if not all(isinstance(part, str) and re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', part) for part in (start, end)):
+                raise serializers.ValidationError('BOH times must use 24-hour HH:MM format.')
+            if start >= end:
+                raise serializers.ValidationError('BOH shift end must be after its start.')
+            pair = (start, end)
+            if pair in seen:
+                raise serializers.ValidationError('BOH shift times must be unique.')
+            seen.add(pair)
+            clean.append({'start': start, 'end': end})
+        return clean
+
+    def validate_zone_priority(self, value):
+        if (
+            not isinstance(value, list)
+            or any(not isinstance(zone, str) for zone in value)
+            or Counter(value) != Counter(DEFAULT_ZONE_PRIORITY)
+        ):
+            raise serializers.ValidationError('Zone priority must reorder the ten existing zone slots.')
+        return value
 
 
 class UserSerializer(serializers.ModelSerializer):

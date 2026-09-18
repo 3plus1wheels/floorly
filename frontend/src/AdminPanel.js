@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Building2, Check, ChevronDown, FileSpreadsheet, KeyRound, LoaderCircle, Pencil, Plus, Search, ShieldCheck, Trash2, Upload, Users, X } from 'lucide-react';
+import { AlertTriangle, Building2, Check, ChevronDown, Clock3, FileSpreadsheet, GripVertical, KeyRound, LoaderCircle, MapPinned, Pencil, Plus, Search, ShieldCheck, Trash2, Upload, Users, X } from 'lucide-react';
+import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import API_BASE from './config';
 import { useAuth } from './AuthContext';
 import './AdminPanel.css';
@@ -15,6 +18,11 @@ const ROLES = [
   { value: 'management', label: 'Management' },
   { value: 'non_active', label: 'Non-active' },
 ];
+const DEFAULT_BOH_SHIFT_TIMES = [{ start: '14:00', end: '18:45' }, { start: '16:30', end: '21:15' }];
+const DEFAULT_ZONE_PRIORITY = ['WOMENS', 'MENS', 'FITS', 'CASH', 'FITS', 'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS'];
+const ZONE_COLORS = {
+  WOMENS: '#e91e63', MENS: '#1976d2', FITS: '#7b1fa2', CASH: '#00897b', GREET: '#f57c00',
+};
 const emptyUser = { full_name: '', username: '', email: '', temporary_password: '', is_admin: false };
 const orgId = value => value == null ? '' : String(value);
 
@@ -38,6 +46,111 @@ function importWarnings(batch) {
   const warnings = batch?.warnings;
   if (!Array.isArray(warnings)) return [];
   return warnings.map(warning => typeof warning === 'string' ? warning : warning?.message || warning?.detail || JSON.stringify(warning));
+}
+
+function priorityCards(zones) {
+  const counts = {};
+  return zones.map(zone => {
+    counts[zone] = (counts[zone] || 0) + 1;
+    return { id: `${zone.toLowerCase()}-${counts[zone]}`, zone };
+  });
+}
+
+function SortableZoneCard({ card, position, onKeyboardMove }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id });
+  return <li
+    ref={setNodeRef}
+    className={`admin-zone-priority-card${isDragging ? ' dragging' : ''}`}
+    style={{ transform: CSS.Transform.toString(transform), transition }}
+  >
+    <span className="admin-zone-rank">{position + 1}</span>
+    <span className="admin-zone-swatch" style={{ background: ZONE_COLORS[card.zone] }} />
+    <strong>{card.zone}</strong>
+    <button
+      type="button"
+      className="admin-drag-handle"
+      aria-label={`Move ${card.zone} priority ${position + 1}`}
+      title="Drag, or press Space then an arrow key. Alt+Arrow also moves one position."
+      {...attributes}
+      {...listeners}
+      onKeyDown={event => {
+        if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+          event.preventDefault();
+          onKeyboardMove(card.id, event.key === 'ArrowUp' ? -1 : 1);
+          return;
+        }
+        listeners?.onKeyDown?.(event);
+      }}
+    >
+      <GripVertical size={17} />
+    </button>
+  </li>;
+}
+
+function FloorMapRules({ organization, saving, onSave }) {
+  const initialBoh = organization.boh_shift_times || DEFAULT_BOH_SHIFT_TIMES;
+  const initialPriority = organization.zone_priority || DEFAULT_ZONE_PRIORITY;
+  const [bohTimes, setBohTimes] = useState(() => initialBoh.map(rule => ({ ...rule })));
+  const [cards, setCards] = useState(() => priorityCards(initialPriority));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const currentPriority = cards.map(card => card.zone);
+  const dirty = JSON.stringify(bohTimes) !== JSON.stringify(initialBoh)
+    || JSON.stringify(currentPriority) !== JSON.stringify(initialPriority);
+  const pairs = bohTimes.map(rule => `${rule.start}-${rule.end}`);
+  const invalid = bohTimes.some(rule => !rule.start || !rule.end || rule.start >= rule.end)
+    || new Set(pairs).size !== pairs.length;
+
+  const updateBohTime = (index, field, value) => setBohTimes(current => current.map(
+    (rule, ruleIndex) => ruleIndex === index ? { ...rule, [field]: value } : rule
+  ));
+  const handleDragEnd = ({ active, over }) => {
+    if (!over || active.id === over.id) return;
+    setCards(current => {
+      const from = current.findIndex(card => card.id === active.id);
+      const to = current.findIndex(card => card.id === over.id);
+      return arrayMove(current, from, to);
+    });
+  };
+  const handleKeyboardMove = (cardId, delta) => setCards(current => {
+    const from = current.findIndex(card => card.id === cardId);
+    const to = Math.max(0, Math.min(current.length - 1, from + delta));
+    return from === to ? current : arrayMove(current, from, to);
+  });
+
+  return <section className="admin-section admin-floor-rules-section">
+    <div className="admin-section-heading"><div><span className="admin-kicker">Workbook automation</span><h3><MapPinned size={19} /> Floor map rules</h3><p>Configure automatic BOH shifts and stylist zone demand for {organization.name}.</p></div></div>
+    <form onSubmit={event => { event.preventDefault(); if (!invalid && dirty) onSave({ boh_shift_times: bohTimes, zone_priority: currentPriority }); }}>
+      <div className="admin-rules-grid">
+        <div className="admin-boh-rules">
+          <div className="admin-rules-subheading"><div><h4><Clock3 size={16} /> Always BOH shifts</h4><p>Exact matching shifts generate as BOH on every day.</p></div><button type="button" onClick={() => setBohTimes(current => [...current, { start: '', end: '' }])}><Plus size={14} /> Add time</button></div>
+          <div className="admin-boh-time-list">
+            {bohTimes.length ? bohTimes.map((rule, index) => <div className="admin-boh-time-row" key={index}>
+              <span>{index + 1}</span>
+              <label>Start<input type="time" aria-label={`BOH start ${index + 1}`} value={rule.start} onChange={event => updateBohTime(index, 'start', event.target.value)} /></label>
+              <span className="admin-time-arrow">→</span>
+              <label>End<input type="time" aria-label={`BOH end ${index + 1}`} value={rule.end} onChange={event => updateBohTime(index, 'end', event.target.value)} /></label>
+              <button type="button" className="admin-icon-button admin-remove-rule" aria-label={`Remove BOH time ${index + 1}`} onClick={() => setBohTimes(current => current.filter((_, ruleIndex) => ruleIndex !== index))}><Trash2 size={15} /></button>
+            </div>) : <div className="admin-inline-state"><Clock3 size={17} /><div><strong>No automatic BOH times</strong><span>BOH will only come from imported roles.</span></div></div>}
+          </div>
+          {invalid && <p className="admin-rule-error" role="alert">Each rule needs a unique start time earlier than its end time.</p>}
+        </div>
+        <div className="admin-priority-rules">
+          <div className="admin-rules-subheading"><div><h4><GripVertical size={16} /> Stylist zone priority</h4><p>Drag all ten demand slots into the order they should fill.</p></div></div>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={cards.map(card => card.id)} strategy={verticalListSortingStrategy}>
+              <ol className="admin-zone-priority-list">
+                {cards.map((card, index) => <SortableZoneCard key={card.id} card={card} position={index} onKeyboardMove={handleKeyboardMove} />)}
+              </ol>
+            </SortableContext>
+          </DndContext>
+        </div>
+      </div>
+      <div className="admin-rules-actions"><span>{dirty ? 'Unsaved floor map changes' : 'Floor map rules are up to date'}</span><button type="submit" className="admin-primary-button" disabled={saving || invalid || !dirty}>{saving ? 'Saving…' : 'Save floor map rules'}</button></div>
+    </form>
+  </section>;
 }
 
 export default function AdminPanel({ onOrganizationsChanged }) {
@@ -179,6 +292,19 @@ export default function AdminPanel({ onOrganizationsChanged }) {
     try {
       await request(`/api/admin/organizations/${selectedOrganization.id}/`, { method: 'PATCH', body: JSON.stringify({ name: rename.trim() }) });
       await load(selectedId); await onOrganizationsChanged?.(); setNotice('Organization name updated.');
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  };
+
+  const saveFloorRules = async rules => {
+    if (!selectedOrganization) return;
+    setSaving(true); setError(''); setNotice('');
+    try {
+      const updated = await request(`/api/admin/organizations/${selectedOrganization.id}/`, {
+        method: 'PATCH', body: JSON.stringify(rules),
+      });
+      setOrganizations(current => current.map(org => org.id === updated.id ? { ...org, ...updated } : org));
+      setNotice('Floor map rules updated. Generated zone maps now use the new settings.');
     } catch (err) { setError(err.message); }
     finally { setSaving(false); }
   };
@@ -343,6 +469,7 @@ export default function AdminPanel({ onOrganizationsChanged }) {
           </>}
         </div>
       </section>
+      <FloorMapRules key={selectedOrganization.id} organization={selectedOrganization} saving={saving} onSave={saveFloorRules} />
       <section className="admin-section admin-team-section">
         <div className="admin-section-heading"><div><span className="admin-kicker">People</span><h3><Users size={19} /> Team</h3><p>Roster records imported from the schedule workbook.</p></div><span className="admin-count">{team.length}<small> / {employees.length} staff</small></span></div>
         {!selectedOrganization.is_active ? <div className="admin-inline-state"><AlertTriangle size={18} /><div><strong>Team editing is paused</strong><span>Reactivate this organization to load and edit its staff roster.</span></div></div> : <>

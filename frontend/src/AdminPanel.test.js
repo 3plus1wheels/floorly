@@ -6,9 +6,11 @@ jest.mock('./AuthContext', () => ({
   useAuth: () => ({ user: { id: 99 } }),
 }));
 
+const defaultBohTimes = [{ start: '14:00', end: '18:45' }, { start: '16:30', end: '21:15' }];
+const defaultPriority = ['WOMENS', 'MENS', 'FITS', 'CASH', 'FITS', 'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS'];
 const organizations = [
-  { id: 1, name: 'North Store', is_active: true },
-  { id: 2, name: 'South Store', is_active: true },
+  { id: 1, name: 'North Store', is_active: true, boh_shift_times: defaultBohTimes, zone_priority: defaultPriority },
+  { id: 2, name: 'South Store', is_active: true, boh_shift_times: defaultBohTimes, zone_priority: defaultPriority },
 ];
 
 const userByOrganization = {
@@ -57,6 +59,11 @@ describe('AdminPanel organization scope', () => {
         return response({ id: 3, name: JSON.parse(options.body).name });
       }
       if (path === '/api/admin/organizations/') return response(organizations);
+      if (/\/api\/admin\/organizations\/\d+\/$/.test(path) && options.method === 'PATCH') {
+        const organizationId = Number(path.split('/').at(-2));
+        const organization = organizations.find(item => item.id === organizationId);
+        return response({ ...organization, ...JSON.parse(options.body) });
+      }
       if (path === '/api/admin/users/' && options.method === 'POST') return response({ id: 30 });
       if (path === '/api/admin/users/') return response(userByOrganization[query.get('organization_id')] || []);
       if (path === '/api/schedule/staff/') {
@@ -139,6 +146,50 @@ describe('AdminPanel organization scope', () => {
     await userEvent.type(search, 'Bailey');
 
     expect(visibleTeamNames()).toEqual(['Bailey Jones']);
+  });
+
+  test('edits exact BOH times and saves the organization floor map rules', async () => {
+    render(<AdminPanel />);
+    await screen.findByText('Floor map rules');
+
+    fireEvent.change(screen.getByLabelText('BOH start 1'), { target: { value: '13:30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove BOH time 2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add time' }));
+    fireEvent.change(screen.getByLabelText('BOH start 2'), { target: { value: '15:00' } });
+    fireEvent.change(screen.getByLabelText('BOH end 2'), { target: { value: '19:30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save floor map rules' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/admin/organizations/1/'), expect.objectContaining({ method: 'PATCH' })));
+    const saveCall = fetchMock.mock.calls.find(([url, options]) =>
+      String(url).includes('/api/admin/organizations/1/')
+      && options?.method === 'PATCH'
+      && JSON.parse(options.body).boh_shift_times);
+    expect(JSON.parse(saveCall[1].body)).toEqual({
+      boh_shift_times: [
+        { start: '13:30', end: '18:45' },
+        { start: '15:00', end: '19:30' },
+      ],
+      zone_priority: defaultPriority,
+    });
+    expect(await screen.findByText(/Generated zone maps now use the new settings/)).toBeInTheDocument();
+  });
+
+  test('supports keyboard reordering of duplicate-aware priority cards', async () => {
+    render(<AdminPanel />);
+    const firstHandle = await screen.findByRole('button', { name: 'Move WOMENS priority 1' });
+
+    fireEvent.keyDown(firstHandle, { key: 'ArrowDown', code: 'ArrowDown', altKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Save floor map rules' }));
+
+    await waitFor(() => {
+      const saveCall = fetchMock.mock.calls.find(([url, options]) =>
+        String(url).includes('/api/admin/organizations/1/')
+        && options?.method === 'PATCH'
+        && JSON.parse(options.body).zone_priority?.[0] === 'MENS');
+      expect(saveCall).toBeTruthy();
+      expect(JSON.parse(saveCall[1].body).zone_priority.slice(0, 3)).toEqual(['MENS', 'WOMENS', 'FITS']);
+    });
   });
 
   test('requires confirmation before removing an employee and refreshes the roster', async () => {

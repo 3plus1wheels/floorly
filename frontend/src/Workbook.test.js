@@ -225,7 +225,7 @@ describe('Workbook KPI persistence', () => {
     expect(screen.getByRole('option', { name: 'Print Fit: Fit More' })).toBeInTheDocument();
   });
 
-  test('selects a rectangle, skips blank cells, saves a shared zone, and clears it with Delete', async () => {
+  test('selects one cell, saves its shared zone, and clears it with Delete', async () => {
     let savedOverrides = [];
     const zoneRequests = [];
     fetchMock.mockImplementation(async (url, options = {}) => {
@@ -257,35 +257,29 @@ describe('Workbook KPI persistence', () => {
 
     render(<Workbook />);
     const alexNine = (await screen.findAllByRole('gridcell', { name: 'WOMENS' }))[0];
-    const blairTen = screen.getAllByRole('gridcell', { name: 'MENS' })[0];
     fireEvent.pointerDown(alexNine, { button: 0, pointerType: 'mouse' });
-    fireEvent.pointerEnter(blairTen, { pointerType: 'mouse' });
     fireEvent.pointerUp(document);
 
     const cash = screen.getByRole('button', { name: 'CASH' });
-    await waitFor(() => expect(cash).toHaveAttribute('title', 'Assign CASH to 3 selected cells'));
+    await waitFor(() => expect(cash).toHaveAttribute('title', 'Assign CASH to 1 selected cell'));
     fireEvent.click(cash);
     await waitFor(() => expect(zoneRequests).toHaveLength(1));
     expect(zoneRequests[0]).toEqual({
       set: {
         zone: 'CASH',
-        cells: [
-          { shift_id: 101, hour: 9 },
-          { shift_id: 101, hour: 10 },
-          { shift_id: 102, hour: 10 },
-        ],
+        cells: [{ shift_id: 101, hour: 9 }],
       },
     });
-    expect(screen.getAllByRole('gridcell', { name: 'CASH' })).toHaveLength(3);
+    expect(screen.getAllByRole('gridcell', { name: 'CASH' })).toHaveLength(1);
 
     await waitFor(() => expect(cash).not.toBeDisabled());
-    fireEvent.keyDown(blairTen, { key: 'Delete' });
+    fireEvent.keyDown(alexNine, { key: 'Delete' });
     await waitFor(() => expect(zoneRequests).toHaveLength(2));
-    expect(zoneRequests[1].clear.cells).toHaveLength(3);
+    expect(zoneRequests[1].clear.cells).toEqual([{ shift_id: 101, hour: 9 }]);
     await waitFor(() => expect(screen.queryAllByRole('gridcell', { name: 'CASH' })).toHaveLength(0));
   });
 
-  test('extends selection with keyboard and focuses the palette with Enter', async () => {
+  test('moves the single-cell selection with the keyboard and focuses the palette with Enter', async () => {
     fetchMock.mockImplementation(async (url) => {
       const parsed = new URL(String(url), 'http://localhost');
       if (parsed.pathname === '/api/schedule/workbook/') {
@@ -305,6 +299,7 @@ describe('Workbook KPI persistence', () => {
     fireEvent.keyDown(first, { key: 'ArrowRight', shiftKey: true });
     const second = screen.getByRole('gridcell', { name: 'MENS' });
     await waitFor(() => expect(second).toHaveAttribute('aria-selected', 'true'));
+    expect(first).toHaveAttribute('aria-selected', 'false');
     fireEvent.keyDown(second, { key: 'Enter' });
     expect(screen.getByRole('button', { name: 'WOMENS' })).toHaveFocus();
   });

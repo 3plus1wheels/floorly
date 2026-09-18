@@ -186,7 +186,7 @@ function zoneStyle(zone) {
   return ZONE_STYLE[zone] || { bg: '#555', text: '#fff' };
 }
 
-function ZoneCell({ zone, effective, overridden, selected, active, cellRef, onPointerDown, onPointerEnter, onKeyDown, onFocus }) {
+function ZoneCell({ zone, effective, overridden, selected, active, cellRef, onPointerDown, onKeyDown, onFocus }) {
   if (!zone) return <td className="wb-hour-cell" />;
 
   const s = zoneStyle(effective);
@@ -200,7 +200,6 @@ function ZoneCell({ zone, effective, overridden, selected, active, cellRef, onPo
       aria-selected={selected}
       tabIndex={active ? 0 : -1}
       onPointerDown={onPointerDown}
-      onPointerEnter={onPointerEnter}
       onKeyDown={onKeyDown}
       onFocus={onFocus}
     >
@@ -474,7 +473,6 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const [error, setError]         = useState(null);
   const [overrides, setOverrides] = useState({});
   const [selection, setSelection] = useState(null);
-  const [dragging, setDragging] = useState(false);
   const [zoneSaveStatus, setZoneSaveStatus] = useState('saved');
   const [zoneSaveError, setZoneSaveError] = useState('');
   const [kpiState, setKpiState] = useState(null);
@@ -484,7 +482,6 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const loadRequestRef = useRef(0);
   const saveRequestRef = useRef(0);
   const zoneSaveRequestRef = useRef(0);
-  const draggingRef = useRef(false);
   const cellRefs = useRef(new Map());
   const paletteRefs = useRef([]);
 
@@ -516,7 +513,6 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     setError(null);
     setOverrides({});
     setSelection(null);
-    setDragging(false);
     setZoneSaveStatus('saved');
     setZoneSaveError('');
     setData(null);
@@ -617,38 +613,13 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     saveKpiPatch({ hourly_updates: { [hour]: { [key]: normalizedValue } } });
   }, [saveKpiPatch]);
 
-  useEffect(() => {
-    if (!dragging) return undefined;
-    const stopDragging = () => {
-      draggingRef.current = false;
-      setDragging(false);
-    };
-    document.addEventListener('pointerup', stopDragging);
-    document.addEventListener('pointercancel', stopDragging);
-    return () => {
-      document.removeEventListener('pointerup', stopDragging);
-      document.removeEventListener('pointercancel', stopDragging);
-    };
-  }, [dragging]);
-
   const selectedCells = useMemo(() => {
     if (!selection || !data) return [];
-    const rowStart = Math.min(selection.anchor.row, selection.focus.row);
-    const rowEnd = Math.max(selection.anchor.row, selection.focus.row);
-    const colStart = Math.min(selection.anchor.col, selection.focus.col);
-    const colEnd = Math.max(selection.anchor.col, selection.focus.col);
-    const cells = [];
-    for (let rowIndex = rowStart; rowIndex <= rowEnd; rowIndex += 1) {
-      const row = data.rows[rowIndex];
-      if (!row) continue;
-      for (let colIndex = colStart; colIndex <= colEnd; colIndex += 1) {
-        const hour = data.hours[colIndex];
-        if (hour !== undefined && row.zones[String(hour)]) {
-          cells.push({ row: rowIndex, col: colIndex, shift_id: row.shift_id, hour });
-        }
-      }
-    }
-    return cells;
+    const { row: rowIndex, col: colIndex } = selection.focus;
+    const row = data.rows[rowIndex];
+    const hour = data.hours[colIndex];
+    if (!row || hour === undefined || !row.zones[String(hour)]) return [];
+    return [{ row: rowIndex, col: colIndex, shift_id: row.shift_id, hour }];
   }, [data, selection]);
 
   const selectedKeys = useMemo(
@@ -731,7 +702,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
       if (row < 0 || row >= data.rows.length || col < 0 || col >= data.hours.length) return;
     } while (!data.rows[row].zones[String(data.hours[col])]);
     const focus = { row, col };
-    setSelection(current => ({ anchor: event.shiftKey ? current.anchor : focus, focus }));
+    setSelection({ anchor: focus, focus });
     focusGridCell(focus);
   }, [data, focusGridCell, selection]);
 
@@ -1003,18 +974,8 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
                                 if (!zone || (event.button !== undefined && event.button !== 0)) return;
                                 event.preventDefault();
                                 const focus = { row: ri, col };
-                                setSelection(current => ({
-                                  anchor: event.shiftKey && current ? current.anchor : focus,
-                                  focus,
-                                }));
-                                if (event.pointerType !== 'touch') {
-                                  draggingRef.current = true;
-                                  setDragging(true);
-                                }
+                                setSelection({ anchor: focus, focus });
                                 focusGridCell(focus);
-                              }}
-                              onPointerEnter={() => {
-                                if (draggingRef.current && zone) setSelection(current => current ? ({ ...current, focus: { row: ri, col } }) : current);
                               }}
                               onKeyDown={handleGridKeyDown}
                             />

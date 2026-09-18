@@ -4,6 +4,24 @@ from django.db import models
 
 # Create your models here.
 
+DEFAULT_BOH_SHIFT_TIMES = [
+    {'start': '14:00', 'end': '18:45'},
+    {'start': '16:30', 'end': '21:15'},
+]
+DEFAULT_ZONE_PRIORITY = [
+    'WOMENS', 'MENS', 'FITS', 'CASH', 'FITS',
+    'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS',
+]
+
+
+def default_boh_shift_times():
+    return [dict(rule) for rule in DEFAULT_BOH_SHIFT_TIMES]
+
+
+def default_zone_priority():
+    return list(DEFAULT_ZONE_PRIORITY)
+
+
 class Item(models.Model):
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -60,6 +78,8 @@ class UserProfile(models.Model):
 class Organization(models.Model):
     name = models.CharField(max_length=255, unique=True)
     is_active = models.BooleanField(default=True)
+    boh_shift_times = models.JSONField(default=default_boh_shift_times, blank=True)
+    zone_priority = models.JSONField(default=default_zone_priority)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

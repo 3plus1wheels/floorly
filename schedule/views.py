@@ -31,7 +31,6 @@ WORKBOOK_INTERVAL_STARTS = tuple(range(
     WORKBOOK_INTERVAL_MINUTES,
 ))
 CEL_BLOCK_INTERVALS = 120 // WORKBOOK_INTERVAL_MINUTES
-BOH_CLOSING_SHIFT = (time(16, 30), time(21, 15))
 KRONOS_PRIVACY_POLICY_VERSION = '2026-09-16'
 
 WORKBOOK_COL_HEADERS = [
@@ -60,7 +59,7 @@ def _shift_covers_interval(shift, interval_start):
     )
 
 
-def _build_interval_assignments(shifts, staff_skill, store_open_minute):
+def _build_interval_assignments(shifts, staff_skill, store_open_minute, slot_sequence=None):
     """Build internal quarter-hour assignments without changing the hourly API."""
     interval_assignments = {}
     shift_anchor_zones = {}
@@ -88,7 +87,8 @@ def _build_interval_assignments(shifts, staff_skill, store_open_minute):
                 del shift_anchor_zones[employee_id]
 
         previous = interval_assignments.get(interval_start - WORKBOOK_INTERVAL_MINUTES, {})
-        open_slots = list(SLOT_SEQUENCE[:min(len(stylists), len(SLOT_SEQUENCE))])
+        ordered_slots = slot_sequence or SLOT_SEQUENCE
+        open_slots = list(ordered_slots[:min(len(stylists), len(ordered_slots))])
         available = list(stylists)
         assigned = {}
 
@@ -198,6 +198,15 @@ def _build_interval_assignments(shifts, staff_skill, store_open_minute):
             cel_consecutive[employee_id] = 0
 
     return interval_assignments
+
+
+def _is_forced_boh_shift(shift, organization):
+    start = shift.start_time.strftime('%H:%M')
+    end = shift.end_time.strftime('%H:%M')
+    return any(
+        isinstance(rule, dict) and rule.get('start') == start and rule.get('end') == end
+        for rule in (organization.boh_shift_times or [])
+    )
 
 
 class ShiftListView(APIView):
@@ -333,8 +342,6 @@ def _validate_sync_payload(payload):
             end_time = _parse_hhmm(item['end_time'], 'end_time')
             if end_time <= start_time:
                 raise PayloadError('end_time must be after start_time')
-            if (start_time, end_time) == BOH_CLOSING_SHIFT:
-                role = 'BOH'
             key = (name.casefold(), shift_date, start_time)
             occurrence = occurrences.get(key, 0)
             occurrences[key] = occurrence + 1
@@ -668,7 +675,7 @@ class WorkbookView(APIView):
         }
         role_overrides = {'associate': 'Stylist', 'management': 'CEL'}
         for shift in shifts:
-            if (shift.start_time, shift.end_time) == BOH_CLOSING_SHIFT:
+            if _is_forced_boh_shift(shift, organization):
                 shift.effective_role = 'BOH'
             else:
                 shift.effective_role = role_overrides.get(shift.employee.role_override, shift.role)
@@ -693,6 +700,7 @@ class WorkbookView(APIView):
             shifts,
             staff_skill,
             store_open_minute,
+            [zone.lower() for zone in organization.zone_priority],
         )
 
         rows = []

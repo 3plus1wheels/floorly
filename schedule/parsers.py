@@ -28,35 +28,14 @@ PARSER_DEBUG = os.environ.get("PARSER_DEBUG", "0") == "1"
 
 DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-# ---------------------------------------------------------------------------
-# BOH shift fingerprints  (start_time, end_time) — all times are naive
-# ---------------------------------------------------------------------------
-BOH_TIMES: set[tuple] = {
-    (time(16, 30), time(21, 15)),   # 4:30 PM – 9:15 PM
-    (time(8,   0), time(12, 45)),   # 8:00 AM – 12:45 PM
-    (time(9,   0), time(13, 45)),   # 9:00 AM – 1:45 PM
-}
-
-# 10:00 AM – 2:45 PM is BOH on Sunday only; Stylist every other day
-SUN_ONLY_BOH_TIMES: set[tuple] = {
-    (time(10,  0), time(14, 45)),
-}
-
-
 def _normalize_role(raw_role: str, start_t: time, end_t: time, day_label: str = '', primary_job: str = '') -> str:
-    """Map a raw WFM role string + shift times to one of: Stylist | CEL | BOH."""
-    if (start_t, end_t) == (time(16, 30), time(21, 15)):
-        return "BOH"
+    """Normalize source roles without applying organization-specific time rules."""
     r = raw_role.lower()
     p = primary_job.lower()
-    CEL_KEYWORDS = ("cel", "supervisor", "management")
+    CEL_KEYWORDS = ("cel", "supervisor", "management", "manager")
     if any(kw in r for kw in CEL_KEYWORDS) or any(kw in p for kw in CEL_KEYWORDS):
         return "CEL"
-    if "shipment" in r or "shipment" in p:
-        return "BOH"
-    if (start_t, end_t) in BOH_TIMES:
-        return "BOH"
-    if (start_t, end_t) in SUN_ONLY_BOH_TIMES and day_label == 'Sun':
+    if any(kw in r for kw in ("shipment", "stock", "inventory", "boh")) or any(kw in p for kw in ("shipment", "stock", "inventory", "boh")):
         return "BOH"
     return "Stylist"
 
