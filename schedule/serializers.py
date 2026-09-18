@@ -30,7 +30,10 @@ class StaffZoneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StaffZone
-        fields = ['employee_id', 'name', 'primary_job', 'role_override', 'workbook_name', 'default_workbook_name'] + ZONE_FIELDS
+        fields = [
+            'employee_id', 'name', 'primary_job', 'role_override', 'workbook_name',
+            'default_workbook_name', 'preferred_zone',
+        ] + ZONE_FIELDS
 
     def get_default_workbook_name(self, obj):
         return default_workbook_name(obj.employee.name)

@@ -4,6 +4,7 @@ import threading
 import unicodedata
 from collections import Counter
 from datetime import date, datetime, time, timedelta
+from itertools import combinations
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -59,10 +60,41 @@ def _shift_covers_interval(shift, interval_start):
     )
 
 
+def _ensure_slot_counts(base_slots, required_counts):
+    """Return the least-disruptive slot list satisfying each required count."""
+    slots = list(base_slots)
+    if sum(required_counts.values()) > len(slots):
+        return None
+
+    counts = Counter(slots)
+    zone_order = {zone: index for index, zone in enumerate(ZONE_FIELDS)}
+    ordered_required = sorted(
+        required_counts,
+        key=lambda zone: (
+            base_slots.index(zone) if zone in base_slots else len(base_slots) + zone_order.get(zone, 99),
+            zone,
+        ),
+    )
+    for zone in ordered_required:
+        while counts[zone] < required_counts[zone]:
+            replace_index = next((
+                index
+                for index in range(len(slots) - 1, -1, -1)
+                if counts[slots[index]] > required_counts.get(slots[index], 0)
+            ), None)
+            if replace_index is None:
+                return None
+            counts[slots[replace_index]] -= 1
+            slots[replace_index] = zone
+            counts[zone] += 1
+    return slots
+
+
 def _build_interval_assignments(shifts, staff_skill, store_open_minute, slot_sequence=None):
     """Build internal quarter-hour assignments without changing the hourly API."""
     interval_assignments = {}
     shift_anchor_zones = {}
+    previous_active_stylist_ids = None
 
     def skill(employee_id, zone):
         return getattr(staff_skill.get(employee_id), zone, 0) or 0
@@ -73,8 +105,87 @@ def _build_interval_assignments(shifts, staff_skill, store_open_minute, slot_seq
             return 0
         return sum(getattr(staff_zone, field, 0) or 0 for field in ZONE_FIELDS)
 
-    # Assign Stylists chronologically. First lock valid continuing assignments,
-    # then fill any newly opened slots by skill using the existing tie-breakers.
+    def preferred_zone(employee_id):
+        value = getattr(staff_skill.get(employee_id), 'preferred_zone', '') or ''
+        return value if value in ZONE_FIELDS else ''
+
+    def add_scores(left, right):
+        return tuple(a + b for a, b in zip(left, right))
+
+    def match_slots(stylists, slots, previous):
+        """Globally match employees to at most ten slots using bounded bitmask DP."""
+        ordered_staff = sorted(stylists, key=lambda shift: shift.employee_id)
+        slot_count = len(slots)
+        score_size = 3 + (slot_count * 3)
+        empty_score = (0,) * score_size
+        # mask -> (score, picks); picks are slot indexes in ordered_staff order.
+        states = {0: (empty_score, ())}
+
+        def is_better(candidate, current):
+            if current is None:
+                return True
+            candidate_score, candidate_picks = candidate
+            current_score, current_picks = current
+            if candidate_score != current_score:
+                return candidate_score > current_score
+            candidate_key = tuple(
+                slot_count - pick if pick >= 0 else 0 for pick in candidate_picks
+            )
+            current_key = tuple(
+                slot_count - pick if pick >= 0 else 0 for pick in current_picks
+            )
+            return candidate_key > current_key
+
+        for shift in ordered_staff:
+            employee_id = shift.employee_id
+            next_states = {}
+            for mask, (current_score, current_picks) in states.items():
+                skipped = (current_score, current_picks + (-1,))
+                if is_better(skipped, next_states.get(mask)):
+                    next_states[mask] = skipped
+
+                total_skill = skill_sum(employee_id)
+                preference = preferred_zone(employee_id)
+                for slot_index, zone in enumerate(slots):
+                    bit = 1 << slot_index
+                    if mask & bit:
+                        continue
+                    zone_skill = skill(employee_id, zone)
+                    contribution = [0] * score_size
+                    contribution[0] = int(
+                        zone_skill > 0 and previous.get(employee_id) == zone.upper()
+                    )
+                    contribution[1] = int(zone_skill > 0)
+                    contribution[2] = int(preference == zone)
+                    contribution[3 + slot_index] = zone_skill
+                    contribution[3 + slot_count + slot_index] = int(
+                        shift_anchor_zones.get(employee_id) == zone.upper()
+                    )
+                    contribution[3 + (slot_count * 2) + slot_index] = -(
+                        total_skill - zone_skill
+                    )
+                    candidate = (
+                        add_scores(current_score, tuple(contribution)),
+                        current_picks + (slot_index,),
+                    )
+                    next_mask = mask | bit
+                    if is_better(candidate, next_states.get(next_mask)):
+                        next_states[next_mask] = candidate
+            states = next_states
+
+        full_mask = (1 << slot_count) - 1
+        score, picks = states[full_mask]
+        assignments = {
+            shift.employee_id: slots[pick]
+            for shift, pick in zip(ordered_staff, picks)
+            if pick >= 0
+        }
+        tie_key = tuple(slot_count - pick if pick >= 0 else 0 for pick in picks)
+        return score, tie_key, assignments
+
+    # Assign Stylists chronologically. Slot configurations preserve valid
+    # continuity and exact-time handoffs, then a global matcher chooses the
+    # safest preference-aware team arrangement without employee-order bias.
     for interval_start in WORKBOOK_INTERVAL_STARTS:
         stylists = [
             shift for shift in shifts
@@ -87,56 +198,78 @@ def _build_interval_assignments(shifts, staff_skill, store_open_minute, slot_seq
                 del shift_anchor_zones[employee_id]
 
         previous = interval_assignments.get(interval_start - WORKBOOK_INTERVAL_MINUTES, {})
+        if previous_active_stylist_ids == active_ids:
+            interval_assignments[interval_start] = dict(previous)
+            continue
+        previous_active_stylist_ids = active_ids
         ordered_slots = slot_sequence or SLOT_SEQUENCE
-        open_slots = list(ordered_slots[:min(len(stylists), len(ordered_slots))])
-        available = list(stylists)
+        base_slots = list(ordered_slots[:min(len(stylists), len(ordered_slots))])
+        base_counts = Counter(base_slots)
+
+        continuing_counts = Counter()
+        for shift in stylists:
+            prior_zone = previous.get(shift.employee_id, '').lower()
+            if prior_zone in ZONE_FIELDS and skill(shift.employee_id, prior_zone) > 0:
+                continuing_counts[prior_zone] += 1
+
+        departed_counts = Counter(
+            zone.lower()
+            for employee_id, zone in previous.items()
+            if employee_id not in active_ids and zone.lower() in ZONE_FIELDS
+        )
+        # A zone is protected only while the current staffing plan still calls
+        # for it. This keeps a 4:45 handoff covered without retaining a zone
+        # that legitimately disappears when headcount falls.
+        mandatory_counts = Counter()
+        for zone, capacity in base_counts.items():
+            protected = min(
+                capacity,
+                continuing_counts[zone] + departed_counts[zone],
+            )
+            if protected:
+                mandatory_counts[zone] = protected
+
+        active_preferences = sorted({
+            preferred_zone(shift.employee_id)
+            for shift in stylists
+            if preferred_zone(shift.employee_id)
+        }, key=lambda zone: ZONE_FIELDS.index(zone))
+        for zone in active_preferences:
+            if departed_counts[zone] and not base_counts[zone]:
+                mandatory_counts[zone] = max(mandatory_counts[zone], 1)
+        baseline_slots = _ensure_slot_counts(base_slots, mandatory_counts) or base_slots
+        missing_preferences = [
+            zone for zone in active_preferences if zone not in baseline_slots
+        ]
+
+        best = None
+        for count in range(len(missing_preferences) + 1):
+            for preference_subset in combinations(missing_preferences, count):
+                required_counts = Counter(mandatory_counts)
+                for zone in preference_subset:
+                    required_counts[zone] = max(required_counts[zone], 1)
+                slots = _ensure_slot_counts(base_slots, required_counts)
+                if slots is None:
+                    continue
+                score, tie_key, matched = match_slots(stylists, slots, previous)
+                replacements = sum((Counter(slots) - base_counts).values())
+                base_match = tuple(
+                    int(index < len(base_slots) and zone == base_slots[index])
+                    for index, zone in enumerate(slots)
+                )
+                candidate_key = (score, -replacements, base_match, tie_key)
+                if best is None or candidate_key > best[0]:
+                    best = (candidate_key, matched)
+
+        matched = best[1] if best else {}
         assigned = {}
-
-        # Preserve a preceding-quarter zone while it is still required and the
-        # employee has a non-zero skill level for it. Duplicate slots retain
-        # only as many continuing employees as the interval still needs.
-        for slot_zone in dict.fromkeys(open_slots):
-            capacity = open_slots.count(slot_zone)
-            continuing = [
-                shift for shift in available
-                if previous.get(shift.employee_id) == slot_zone.upper()
-                and skill(shift.employee_id, slot_zone) > 0
-            ]
-            continuing.sort(
-                key=lambda shift: (
-                    skill(shift.employee_id, slot_zone),
-                    shift_anchor_zones.get(shift.employee_id) == slot_zone.upper(),
-                    -skill_sum(shift.employee_id),
-                    -shift.employee_id,
-                ),
-                reverse=True,
-            )
-            for continuing_shift in continuing[:capacity]:
-                employee_id = continuing_shift.employee_id
-                assigned[employee_id] = slot_zone.upper()
-                shift_anchor_zones.setdefault(employee_id, slot_zone.upper())
-                available.remove(continuing_shift)
-                open_slots.remove(slot_zone)
-
-        for slot_zone in open_slots:
-            if not available:
-                break
-            best = max(
-                available,
-                key=lambda shift: (
-                    skill(shift.employee_id, slot_zone),
-                    shift_anchor_zones.get(shift.employee_id) == slot_zone.upper(),
-                    previous.get(shift.employee_id) == slot_zone.upper(),
-                    -skill_sum(shift.employee_id),
-                    -shift.employee_id,
-                ),
-            )
-            assigned[best.employee_id] = slot_zone.upper()
-            shift_anchor_zones.setdefault(best.employee_id, slot_zone.upper())
-            available.remove(best)
-
-        for shift in available:
-            assigned[shift.employee_id] = 'STYLIST'
+        for shift in stylists:
+            zone = matched.get(shift.employee_id)
+            if zone is None:
+                assigned[shift.employee_id] = 'STYLIST'
+                continue
+            assigned[shift.employee_id] = zone.upper()
+            shift_anchor_zones.setdefault(shift.employee_id, zone.upper())
         interval_assignments[interval_start] = assigned
 
     # Schedule managers right-to-left as before, but measure both contiguous
@@ -974,11 +1107,13 @@ class StaffZoneView(APIView):
                 {'error': 'Only administrators may change workbook_name'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        allowed_fields = set(ZONE_FIELDS) | {'role_override'}
+        allowed_fields = set(ZONE_FIELDS) | {'role_override', 'preferred_zone'}
         if isinstance(request.data, dict) and 'workbook_name' in request.data and request.user.is_staff:
             allowed_fields.add('workbook_name')
         if not isinstance(request.data, dict) or not request.data or set(request.data) - allowed_fields:
-            return Response({'error': 'Only zone levels, role_override, and staff-only workbook_name may be changed'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'error': 'Only zone levels, preferred_zone, role_override, and staff-only workbook_name may be changed',
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         zone_updates = {}
         for field in ZONE_FIELDS:
@@ -991,6 +1126,16 @@ class StaffZoneView(APIView):
             if value not in range(4):
                 return Response({'error': f'{field} must be from 0 to 3'}, status=status.HTTP_400_BAD_REQUEST)
             zone_updates[field] = value
+
+        if 'preferred_zone' in request.data:
+            preferred_zone = request.data['preferred_zone']
+            valid_preferences = {choice[0] for choice in StaffZone._meta.get_field('preferred_zone').choices}
+            if preferred_zone not in valid_preferences:
+                return Response(
+                    {'error': 'preferred_zone must be auto, mens, womens, cash, fits, greet, or boh'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            zone_updates['preferred_zone'] = preferred_zone
 
         workbook_name = None
         if 'workbook_name' in request.data:

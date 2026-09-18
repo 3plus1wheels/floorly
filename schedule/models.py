@@ -27,6 +27,7 @@ class Employee(models.Model):
 
 
 ZONE_FIELDS = ['mens', 'womens', 'cash', 'fits', 'greet', 'boh']
+PREFERRED_ZONE_CHOICES = [('', 'Auto')] + [(zone, zone.upper()) for zone in ZONE_FIELDS]
 WORKBOOK_ZONE_CHOICES = [
     (zone, zone)
     for zone in ('WOMENS', 'MENS', 'FITS', 'CASH', 'GREET', 'FLEX', 'OFFICE', 'TASK', 'STYLIST', 'CEL', 'BOH')
@@ -42,6 +43,12 @@ class StaffZone(models.Model):
     fits    = models.SmallIntegerField(default=0)
     greet   = models.SmallIntegerField(default=0)
     boh     = models.SmallIntegerField(default=0)
+    preferred_zone = models.CharField(
+        max_length=8,
+        choices=PREFERRED_ZONE_CHOICES,
+        blank=True,
+        default='',
+    )
 
     def __str__(self):
         return f"Zones({self.employee.name})"

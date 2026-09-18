@@ -51,7 +51,7 @@
 .staff-table {
   border-collapse: collapse;
   width: 100%;
-  min-width: 720px;
+  min-width: 900px;
   font-size: 0.88rem;
 }
 
@@ -77,6 +77,10 @@
 
 .staff-zone-col {
   min-width: 76px;
+}
+
+.staff-preference-col {
+  min-width: 128px;
 }
 
 .staff-table tbody tr {
@@ -164,6 +168,35 @@
 .zone-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.staff-preference-cell {
+  min-width: 128px;
+  padding: 5px 8px;
+  background: rgba(243, 237, 226, 0.45);
+}
+
+.preference-select {
+  width: 100%;
+  min-width: 112px;
+  padding: 6px 8px;
+  border: 1px solid rgba(13, 13, 18, 0.18);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.preference-select:focus {
+  border-color: var(--color-accent);
+  outline: none;
+}
+
+.preference-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .staff-role-cell {

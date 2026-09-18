@@ -194,6 +194,172 @@ class ScheduleSyncTests(TestCase):
         self.assertEqual(rows['Alex Nguyen']['zones']['10'], 'WOMENS')
         self.assertEqual(rows['Blair Smith']['zones']['10'], 'MENS')
 
+    def test_preference_beats_skill_gap_when_coverage_remains_trained(self):
+        alex = Employee.objects.create(organization=self.organization, name='Alex')
+        blair = Employee.objects.create(organization=self.organization, name='Blair')
+        shifts = [
+            Shift.objects.create(
+                employee=employee, date=date(2026, 9, 7), start_time=time(10),
+                end_time=time(11), role='Stylist')
+            for employee in (alex, blair)
+        ]
+        for shift in shifts:
+            shift.effective_role = 'Stylist'
+        alex_zones = StaffZone.objects.create(
+            employee=alex, womens=1, mens=3, preferred_zone='womens')
+        blair_zones = StaffZone.objects.create(employee=blair, womens=3, mens=1)
+
+        assignments = _build_interval_assignments(
+            shifts,
+            {alex.id: alex_zones, blair.id: blair_zones},
+            10 * 60,
+        )
+
+        self.assertEqual(assignments[10 * 60][alex.id], 'WOMENS')
+        self.assertEqual(assignments[10 * 60][blair.id], 'MENS')
+
+    def test_preference_yields_to_avoidable_zero_experience_coverage(self):
+        alex = Employee.objects.create(organization=self.organization, name='Alex')
+        blair = Employee.objects.create(organization=self.organization, name='Blair')
+        shifts = [
+            Shift.objects.create(
+                employee=employee, date=date(2026, 9, 7), start_time=time(10),
+                end_time=time(11), role='Stylist')
+            for employee in (alex, blair)
+        ]
+        for shift in shifts:
+            shift.effective_role = 'Stylist'
+        alex_zones = StaffZone.objects.create(
+            employee=alex, womens=1, mens=3, preferred_zone='womens')
+        blair_zones = StaffZone.objects.create(employee=blair, womens=3, mens=0)
+
+        assignments = _build_interval_assignments(
+            shifts,
+            {alex.id: alex_zones, blair.id: blair_zones},
+            10 * 60,
+        )
+
+        self.assertEqual(assignments[10 * 60][alex.id], 'MENS')
+        self.assertEqual(assignments[10 * 60][blair.id], 'WOMENS')
+
+    def test_boh_preference_can_replace_lowest_priority_floor_slot(self):
+        floor = Employee.objects.create(organization=self.organization, name='Floor')
+        stock = Employee.objects.create(organization=self.organization, name='Stock')
+        shifts = [
+            Shift.objects.create(
+                employee=employee, date=date(2026, 9, 7), start_time=time(10),
+                end_time=time(11), role='Stylist')
+            for employee in (floor, stock)
+        ]
+        for shift in shifts:
+            shift.effective_role = 'Stylist'
+        floor_zones = StaffZone.objects.create(employee=floor, womens=3, mens=3)
+        stock_zones = StaffZone.objects.create(
+            employee=stock, boh=2, preferred_zone='boh')
+
+        assignments = _build_interval_assignments(
+            shifts,
+            {floor.id: floor_zones, stock.id: stock_zones},
+            10 * 60,
+        )
+
+        self.assertEqual(assignments[10 * 60][floor.id], 'WOMENS')
+        self.assertEqual(assignments[10 * 60][stock.id], 'BOH')
+
+    def test_exact_quarter_hour_replacement_inherits_departing_zone(self):
+        departing = Employee.objects.create(organization=self.organization, name='Departing')
+        continuing = Employee.objects.create(organization=self.organization, name='Continuing')
+        arriving = Employee.objects.create(organization=self.organization, name='Arriving')
+        shifts = [
+            Shift.objects.create(
+                employee=departing, date=date(2026, 9, 7), start_time=time(16),
+                end_time=time(16, 45), role='Stylist'),
+            Shift.objects.create(
+                employee=continuing, date=date(2026, 9, 7), start_time=time(16),
+                end_time=time(17), role='Stylist'),
+            Shift.objects.create(
+                employee=arriving, date=date(2026, 9, 7), start_time=time(16, 45),
+                end_time=time(17), role='Stylist'),
+        ]
+        for shift in shifts:
+            shift.effective_role = 'Stylist'
+        zones = {
+            departing.id: StaffZone.objects.create(employee=departing, womens=3),
+            continuing.id: StaffZone.objects.create(employee=continuing, mens=3),
+            arriving.id: StaffZone.objects.create(employee=arriving, womens=1),
+        }
+
+        assignments = _build_interval_assignments(shifts, zones, 10 * 60)
+
+        self.assertEqual(assignments[16 * 60 + 30][departing.id], 'WOMENS')
+        self.assertEqual(assignments[16 * 60 + 30][continuing.id], 'MENS')
+        self.assertNotIn(departing.id, assignments[16 * 60 + 45])
+        self.assertEqual(assignments[16 * 60 + 45][arriving.id], 'WOMENS')
+        self.assertEqual(assignments[16 * 60 + 45][continuing.id], 'MENS')
+
+    def test_simultaneous_handoffs_keep_all_still_required_zones_covered(self):
+        employees = {
+            name: Employee.objects.create(organization=self.organization, name=name)
+            for name in ('Womens Out', 'Mens Stay', 'Fits Out', 'Cash Stay', 'Womens In', 'Fits In')
+        }
+        shifts = []
+        for name, start, end in (
+            ('Womens Out', time(16), time(16, 45)),
+            ('Mens Stay', time(16), time(17)),
+            ('Fits Out', time(16), time(16, 45)),
+            ('Cash Stay', time(16), time(17)),
+            ('Womens In', time(16, 45), time(17)),
+            ('Fits In', time(16, 45), time(17)),
+        ):
+            shift = Shift.objects.create(
+                employee=employees[name], date=date(2026, 9, 7),
+                start_time=start, end_time=end, role='Stylist')
+            shift.effective_role = 'Stylist'
+            shifts.append(shift)
+        skills = {
+            employees[name].id: StaffZone.objects.create(
+                employee=employees[name], **{zone: 3})
+            for name, zone in (
+                ('Womens Out', 'womens'), ('Mens Stay', 'mens'),
+                ('Fits Out', 'fits'), ('Cash Stay', 'cash'),
+                ('Womens In', 'womens'), ('Fits In', 'fits'),
+            )
+        }
+
+        assignments = _build_interval_assignments(shifts, skills, 10 * 60)
+        handoff = assignments[16 * 60 + 45]
+
+        self.assertEqual(handoff[employees['Womens In'].id], 'WOMENS')
+        self.assertEqual(handoff[employees['Fits In'].id], 'FITS')
+        self.assertEqual(handoff[employees['Mens Stay'].id], 'MENS')
+        self.assertEqual(handoff[employees['Cash Stay'].id], 'CASH')
+
+    def test_duplicate_preferences_create_only_one_extra_zone_slot_deterministically(self):
+        first = Employee.objects.create(organization=self.organization, name='First')
+        second = Employee.objects.create(organization=self.organization, name='Second')
+        flexible = Employee.objects.create(organization=self.organization, name='Flexible')
+        shifts = []
+        for employee in (first, second, flexible):
+            shift = Shift.objects.create(
+                employee=employee, date=date(2026, 9, 7), start_time=time(10),
+                end_time=time(11), role='Stylist')
+            shift.effective_role = 'Stylist'
+            shifts.append(shift)
+        skills = {
+            first.id: StaffZone.objects.create(
+                employee=first, greet=3, preferred_zone='greet'),
+            second.id: StaffZone.objects.create(
+                employee=second, greet=3, preferred_zone='greet'),
+            flexible.id: StaffZone.objects.create(
+                employee=flexible, womens=3, mens=3, fits=3),
+        }
+
+        assignments = _build_interval_assignments(shifts, skills, 10 * 60)[10 * 60]
+
+        self.assertEqual(list(assignments.values()).count('GREET'), 1)
+        self.assertEqual(assignments[first.id], 'MENS')
+        self.assertEqual(assignments[second.id], 'GREET')
+
     def test_quarter_hour_arrivals_fill_new_slots_without_changing_api_shape(self):
         starts = [time(10), time(10, 15), time(10, 30), time(10, 45)]
         names = ['Alex', 'Blair', 'Casey', 'Drew']
@@ -575,6 +741,30 @@ class ScheduleSyncTests(TestCase):
 
         invalid = self.client.patch(staff_url, {'role_override': 'owner'}, format='json')
         self.assertEqual(invalid.status_code, 400)
+
+    def test_preferred_zone_round_trips_and_rejects_unknown_values(self):
+        employee = Employee.objects.create(organization=self.organization, name='Preference')
+        StaffZone.objects.create(employee=employee)
+        url = reverse('staff_zone_update', args=[employee.id])
+
+        updated = self.client.patch(url, {'preferred_zone': 'boh'}, format='json')
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.data['preferred_zone'], 'boh')
+        listed = self.client.get(reverse('staff_zones'))
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.data[0]['preferred_zone'], 'boh')
+        self.assertEqual(
+            self.client.patch(url, {'preferred_zone': 'office'}, format='json').status_code,
+            400,
+        )
+        employee.zones.refresh_from_db()
+        self.assertEqual(employee.zones.preferred_zone, 'boh')
+
+    def test_preferred_zone_defaults_to_auto(self):
+        employee = Employee.objects.create(organization=self.organization, name='Auto Preference')
+        staff_zone = StaffZone.objects.create(employee=employee)
+        self.assertEqual(staff_zone.preferred_zone, '')
 
     def test_same_employee_name_and_schedule_are_isolated_by_organization(self):
         other = Organization.objects.create(name='Store Two')

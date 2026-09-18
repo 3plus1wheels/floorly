@@ -14,6 +14,10 @@ const ROLE_OPTIONS = [
   { value: 'management', label: 'Management' },
   { value: 'non_active', label: 'Non-active' },
 ];
+const PREFERENCE_OPTIONS = [
+  { value: '', label: 'Auto' },
+  ...ZONES.map((value, index) => ({ value, label: ZONE_LABELS[index] })),
+];
 
 function scrapedRole(primaryJob) {
   return /manager|management|supervisor|\bcel\b/i.test(primaryJob || '') ? 'Management' : 'Associate';
@@ -118,6 +122,34 @@ export default function Staff() {
     }
   };
 
+  const handlePreferenceChange = async (employeeId, preferredZone) => {
+    const previous = rows.find(r => r.employee_id === employeeId)?.preferred_zone || '';
+    setRows(current => current.map(row => (
+      row.employee_id === employeeId ? { ...row, preferred_zone: preferredZone } : row
+    )));
+    setSaving(current => ({ ...current, [employeeId]: true }));
+    try {
+      const res = await fetch(`${API_BASE}/api/schedule/staff/${employeeId}/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'X-Organization-ID': selectedOrganizationId,
+        },
+        body: JSON.stringify({ preferred_zone: preferredZone }),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const updated = await res.json();
+      setRows(current => current.map(row => row.employee_id === employeeId ? updated : row));
+    } catch {
+      setRows(current => current.map(row => (
+        row.employee_id === employeeId ? { ...row, preferred_zone: previous } : row
+      )));
+    } finally {
+      setSaving(current => ({ ...current, [employeeId]: false }));
+    }
+  };
+
   return (
     <div className="staff-wrap">
       <div className="staff-header">
@@ -160,6 +192,7 @@ export default function Staff() {
                 {ZONE_LABELS.map(z => (
                   <th key={z} className="staff-zone-col">{z}</th>
                 ))}
+                <th className="staff-preference-col">ZONE PREFERENCE</th>
                 <th className="staff-zone-col">ROLE</th>
               </tr>
             </thead>
@@ -173,6 +206,7 @@ export default function Staff() {
                       <td key={zone} className={`staff-zone-cell ${LEVEL_CLASS[level]}`}>
                         <select
                           value={level}
+                          aria-label={`${displayName(row.name)} ${zone} skill`}
                           onChange={e => handleChange(row.employee_id, zone, e.target.value)}
                           className={`zone-select ${LEVEL_CLASS[level]}`}
                           disabled={!!saving[row.employee_id]}
@@ -184,10 +218,24 @@ export default function Staff() {
                       </td>
                     );
                   })}
+                  <td className="staff-preference-cell">
+                    <select
+                      value={row.preferred_zone || ''}
+                      aria-label={`${displayName(row.name)} zone preference`}
+                      onChange={event => handlePreferenceChange(row.employee_id, event.target.value)}
+                      className="preference-select"
+                      disabled={!!saving[row.employee_id]}
+                    >
+                      {PREFERENCE_OPTIONS.map(option => (
+                        <option key={option.value || 'auto'} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </td>
                   <td className="staff-role-cell">
                     <Users style={{ width: 14, height: 14, marginRight: 6, verticalAlign: 'text-bottom' }} />
                     <select
                       value={row.role_override || ''}
+                      aria-label={`${displayName(row.name)} role`}
                       onChange={event => handleRoleChange(row.employee_id, event.target.value)}
                       className="role-select"
                       disabled={!!saving[row.employee_id]}
