@@ -19,7 +19,7 @@ const ROLES = [
   { value: 'non_active', label: 'Non-active' },
 ];
 const DEFAULT_BOH_SHIFT_TIMES = [{ start: '14:00', end: '18:45' }, { start: '16:30', end: '21:15' }];
-const DEFAULT_ZONE_PRIORITY = ['WOMENS', 'MENS', 'FITS', 'CASH', 'FITS', 'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS'];
+const DEFAULT_ZONE_PRIORITY = ['WOMENS', 'MENS', 'FITS', 'CASH', 'FITS', 'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH'];
 const ZONE_COLORS = {
   WOMENS: '#e91e63', MENS: '#1976d2', FITS: '#7b1fa2', CASH: '#00897b', GREET: '#f57c00',
 };
@@ -165,7 +165,7 @@ function FloorMapRules({ organization, saving, onSave }) {
           {invalid && <p className="admin-rule-error" role="alert">Each rule needs a unique start time earlier than its end time.</p>}
         </div>
         <div className="admin-priority-rules">
-          <div className="admin-rules-subheading"><div><h4><GripVertical size={16} /> Stylist zone priority</h4><p>Drag all ten demand slots into the order they should fill.</p></div></div>
+          <div className="admin-rules-subheading"><div><h4><GripVertical size={16} /> Stylist zone priority</h4><p>Drag all eleven demand slots into the order they should fill.</p></div></div>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={cards.map(card => card.id)} strategy={verticalListSortingStrategy}>
               <ol className="admin-zone-priority-list">

@@ -42,7 +42,10 @@ WORKBOOK_COL_HEADERS = [
 
 # Zone assignment order for Stylists in each interval.
 # Slots are filled left-to-right; each Stylist is used at most once per interval.
-SLOT_SEQUENCE = ['womens', 'mens', 'fits', 'cash', 'fits', 'mens', 'womens', 'greet', 'mens', 'womens']
+SLOT_SEQUENCE = [
+    'womens', 'mens', 'fits', 'cash', 'fits', 'mens',
+    'womens', 'greet', 'mens', 'womens', 'cash',
+]
 
 # Main zones that managers can plug when stylists don't fill them
 MAIN_ZONE_SLOTS = ['womens', 'mens', 'fits', 'cash']
@@ -113,7 +116,7 @@ def _build_interval_assignments(shifts, staff_skill, store_open_minute, slot_seq
         return tuple(a + b for a, b in zip(left, right))
 
     def match_slots(stylists, slots, previous):
-        """Globally match employees to at most ten slots using bounded bitmask DP."""
+        """Globally match employees to the bounded demand slots using bitmask DP."""
         ordered_staff = sorted(stylists, key=lambda shift: shift.employee_id)
         slot_count = len(slots)
         score_size = 3 + (slot_count * 3)

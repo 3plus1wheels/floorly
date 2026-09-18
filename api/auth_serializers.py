@@ -66,7 +66,7 @@ class OrganizationSerializer(serializers.ModelSerializer):
             or any(not isinstance(zone, str) for zone in value)
             or Counter(value) != Counter(DEFAULT_ZONE_PRIORITY)
         ):
-            raise serializers.ValidationError('Zone priority must reorder the ten existing zone slots.')
+            raise serializers.ValidationError('Zone priority must reorder the eleven existing zone slots.')
         return value
 
 

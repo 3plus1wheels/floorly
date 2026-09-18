@@ -7,7 +7,7 @@ jest.mock('./AuthContext', () => ({
 }));
 
 const defaultBohTimes = [{ start: '14:00', end: '18:45' }, { start: '16:30', end: '21:15' }];
-const defaultPriority = ['WOMENS', 'MENS', 'FITS', 'CASH', 'FITS', 'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS'];
+const defaultPriority = ['WOMENS', 'MENS', 'FITS', 'CASH', 'FITS', 'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH'];
 const organizations = [
   { id: 1, name: 'North Store', is_active: true, boh_shift_times: defaultBohTimes, zone_priority: defaultPriority },
   { id: 2, name: 'South Store', is_active: true, boh_shift_times: defaultBohTimes, zone_priority: defaultPriority },
@@ -218,6 +218,8 @@ describe('AdminPanel organization scope', () => {
   test('supports keyboard reordering of duplicate-aware priority cards', async () => {
     render(<AdminPanel />);
     await openSection('Floor map rules');
+    expect(screen.getAllByRole('button', { name: /Move .* priority/ })).toHaveLength(11);
+    expect(screen.getAllByText('CASH')).toHaveLength(2);
     const firstHandle = await screen.findByRole('button', { name: 'Move WOMENS priority 1' });
 
     fireEvent.keyDown(firstHandle, { key: 'ArrowDown', code: 'ArrowDown', altKey: true });

@@ -63,6 +63,7 @@ class AdminApiTests(APITestCase):
         self.assertEqual(created.status_code, 201)
         self.assertEqual(created.data['boh_shift_times'], DEFAULT_BOH_SHIFT_TIMES)
         self.assertEqual(created.data['zone_priority'], DEFAULT_ZONE_PRIORITY)
+        self.assertEqual(created.data['zone_priority'].count('CASH'), 2)
         listed = self.client.get('/api/admin/organizations/')
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.data[0]['member_count'], 0)
@@ -75,7 +76,7 @@ class AdminApiTests(APITestCase):
         organization = Organization.objects.create(name='Rules Store')
         priority = [
             'CASH', 'WOMENS', 'MENS', 'FITS', 'FITS',
-            'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS',
+            'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH',
         ]
 
         response = self.client.patch(f'/api/admin/organizations/{organization.id}/', {

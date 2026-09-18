@@ -566,7 +566,7 @@ class ScheduleSyncTests(TestCase):
     def test_custom_zone_priority_changes_first_stylist_slot(self):
         self.organization.zone_priority = [
             'CASH', 'MENS', 'FITS', 'WOMENS', 'FITS',
-            'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS',
+            'MENS', 'WOMENS', 'GREET', 'MENS', 'WOMENS', 'CASH',
         ]
         self.organization.save(update_fields=['zone_priority'])
         employee = Employee.objects.create(organization=self.organization, name='Cash First')
