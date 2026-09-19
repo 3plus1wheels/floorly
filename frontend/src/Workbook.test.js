@@ -350,8 +350,8 @@ describe('Workbook KPI persistence', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Edit shift for ALEX' }));
     const start = screen.getByLabelText('Start time for ALEX');
     const end = screen.getByLabelText('End time for ALEX');
-    expect(start).toHaveAttribute('step', '900');
-    expect(end).toHaveAttribute('step', '900');
+    expect(start).toHaveAttribute('type', 'text');
+    expect(end).toHaveAttribute('type', 'text');
 
     fireEvent.change(end, { target: { value: '09:00' } });
     expect(screen.getByRole('button', { name: 'Save shift for ALEX' })).toBeDisabled();

@@ -298,7 +298,7 @@
 }
 
 .wb-col-name  { min-width: clamp(56px, 5vw, 84px); text-align: left !important; padding-left: clamp(5px, 0.55vw, 9px) !important; }
-.wb-col-shift { min-width: clamp(58px, 5.8vw, 96px); }
+.wb-col-shift { min-width: clamp(38px, 3.4vw, 56px); }
 .wb-col-hour  { min-width: clamp(33px, 2.9vw, 46px); }
 
 .wb-table tbody tr {
@@ -325,42 +325,35 @@
   font-size: clamp(8px, 0.64vw, 11px);
 }
 
-.wb-shift-edit-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
+.App .wb-shift-edit-button {
+  display: inline;
   width: 100%;
-  padding: 2px;
-  border: 0;
-  border-radius: 5px;
-  color: inherit;
-  background: transparent;
-  font: inherit;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  color: inherit !important;
+  background: transparent !important;
+  font: inherit !important;
+  font-weight: inherit !important;
   cursor: pointer;
+  transform: none !important;
 }
 
-.wb-shift-edit-button:hover,
-.wb-shift-edit-button:focus-visible {
-  color: var(--color-text);
-  background: rgba(201, 168, 76, 0.13);
+.App .wb-shift-edit-button:hover,
+.App .wb-shift-edit-button:focus-visible {
+  color: inherit !important;
+  background: transparent !important;
+  transform: none !important;
 }
 
-.wb-shift-edit-button:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
+.App .wb-shift-edit-button:focus-visible {
+  outline: 1px dotted var(--color-muted);
+  outline-offset: 2px;
 }
 
-.wb-shift-edit-button:disabled {
+.App .wb-shift-edit-button:disabled {
   cursor: default;
   opacity: 0.5;
-}
-
-.wb-shift-edit-button svg {
-  width: 9px;
-  height: 9px;
-  flex: none;
-  opacity: 0.62;
 }
 
 .wb-shift-editor {
@@ -371,16 +364,17 @@
   min-width: 82px;
 }
 
-.wb-shift-editor input {
+.App .wb-shift-editor input {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding: 2px 1px;
+  padding: 3px 2px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
   color: var(--color-text);
   background: #fff;
   font: inherit;
+  text-align: center;
 }
 
 .wb-shift-editor-actions {
@@ -390,25 +384,31 @@
   gap: 4px;
 }
 
-.wb-shift-editor-actions button {
+.App .wb-shift-editor-actions button {
   display: inline-grid;
   place-items: center;
   width: 20px;
   height: 18px;
-  padding: 0;
+  padding: 0 !important;
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  color: var(--color-text);
-  background: #fff;
+  color: var(--color-text) !important;
+  background: #fff !important;
   cursor: pointer;
+  transform: none !important;
 }
 
-.wb-shift-editor-actions button:first-child {
-  color: #176943;
+.App .wb-shift-editor-actions button:first-child {
+  color: #176943 !important;
   border-color: rgba(23, 105, 67, 0.35);
 }
 
-.wb-shift-editor-actions button:disabled {
+.App .wb-shift-editor-actions button:hover {
+  background: #f8f5ef !important;
+  transform: none !important;
+}
+
+.App .wb-shift-editor-actions button:disabled {
   cursor: default;
   opacity: 0.4;
 }

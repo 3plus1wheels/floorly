@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { AlertTriangle, Check, Inbox, LoaderCircle, Pencil, Printer, Settings2, X } from 'lucide-react';
+import { AlertTriangle, Check, Inbox, LoaderCircle, Printer, Settings2, X } from 'lucide-react';
 import API_BASE from './config';
 import { useAuth } from './AuthContext';
 import './Workbook.css';
@@ -241,8 +241,9 @@ function ShiftCell({ row, editing, draft, saving, editDisabled, onEdit, onChange
       {editing ? (
         <div className="wb-shift-editor" onKeyDown={event => { if (event.key === 'Escape') onCancel(); }}>
           <input
-            type="time"
-            step="900"
+            type="text"
+            inputMode="numeric"
+            placeholder="09:00"
             aria-label={`Start time for ${row.name}`}
             value={draft.start_time}
             disabled={saving}
@@ -250,8 +251,9 @@ function ShiftCell({ row, editing, draft, saving, editDisabled, onEdit, onChange
           />
           <span aria-hidden="true">–</span>
           <input
-            type="time"
-            step="900"
+            type="text"
+            inputMode="numeric"
+            placeholder="17:00"
             aria-label={`End time for ${row.name}`}
             value={draft.end_time}
             disabled={saving}
@@ -266,7 +268,7 @@ function ShiftCell({ row, editing, draft, saving, editDisabled, onEdit, onChange
         </div>
       ) : (
         <button type="button" className="wb-shift-edit-button" aria-label={`Edit shift for ${row.name}`} disabled={editDisabled} onClick={onEdit}>
-          <span>{row.shift}</span><Pencil aria-hidden="true" />
+          {row.shift}
         </button>
       )}
     </td>
