@@ -56,6 +56,25 @@ class ScheduleSyncTests(TestCase):
     def test_requires_authenticated_user(self):
         self.assertEqual(self.post(authenticated=False).status_code, 401)
 
+    def test_later_sync_replaces_a_manual_shift_time_edit(self):
+        self.assertEqual(self.post().status_code, 200)
+        shift = Shift.objects.get(employee__name='Nguyen, Vova')
+
+        self.client.force_authenticate(self.user)
+        edited = self.client.patch(
+            reverse('shift_detail', args=[shift.id]),
+            {'start_time': '09:15', 'end_time': '17:15'},
+            format='json',
+        )
+        self.assertEqual(edited.status_code, 200, edited.data)
+        shift.refresh_from_db()
+        self.assertEqual(shift.start_time, time(9, 15))
+
+        self.assertEqual(self.post().status_code, 200)
+        replacement = Shift.objects.get(employee__name='Nguyen, Vova')
+        self.assertEqual(replacement.start_time, time(9))
+        self.assertEqual(replacement.end_time, time(17))
+
     def test_requires_organization_header(self):
         self.client.credentials()
         self.assertEqual(self.post().status_code, 400)
@@ -1112,6 +1131,134 @@ class ScheduleSyncTicketSecurityTests(TestCase):
         self.organization.save(update_fields=['is_active'])
         UserProfile.objects.create(user=self.user, full_name='Extension User', must_change_password=True)
         self.assertEqual(self.client.post(self.ticket_url, **self.access_headers()).status_code, 403)
+
+
+class ShiftTimeUpdateTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='shift-editor', password='password')
+        self.organization = Organization.objects.create(name='Shift Store')
+        OrganizationMembership.objects.create(user=self.user, organization=self.organization)
+        self.employee = Employee.objects.create(organization=self.organization, name='Alex Stylist')
+        self.shift = Shift.objects.create(
+            employee=self.employee,
+            date=date(2026, 9, 7),
+            start_time=time(9),
+            end_time=time(12),
+            role='Stylist',
+        )
+        StaffZone.objects.create(employee=self.employee, womens=3)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.client.credentials(HTTP_X_ORGANIZATION_ID=str(self.organization.id))
+        self.url = reverse('shift_detail', args=[self.shift.id])
+
+    def test_updates_times_recalculates_workbook_and_removes_only_out_of_range_overrides(self):
+        for hour in (9, 10, 11):
+            WorkbookZoneOverride.objects.create(
+                shift=self.shift, hour=hour, zone='CASH', last_edited_by=self.user)
+
+        response = self.client.patch(
+            self.url,
+            {'start_time': '09:15', 'end_time': '10:30'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.shift.refresh_from_db()
+        self.assertEqual(self.shift.start_time, time(9, 15))
+        self.assertEqual(self.shift.end_time, time(10, 30))
+        self.assertEqual(
+            set(self.shift.workbook_zone_overrides.values_list('hour', flat=True)),
+            {9, 10},
+        )
+        workbook = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        row = workbook.data['rows'][0]
+        self.assertEqual(row['shift'], '9:15-10:30')
+        self.assertEqual(row['start_time'], '09:15')
+        self.assertEqual(row['end_time'], '10:30')
+        self.assertEqual(set(row['zones']), {'9', '10'})
+        self.assertEqual(row['zone_overrides'], {'9': 'CASH', '10': 'CASH'})
+
+    def test_rejects_invalid_payloads_without_changing_the_shift(self):
+        payloads = [
+            {'start_time': '09:15'},
+            {'start_time': '09:15', 'end_time': '10:00', 'role': 'BOH'},
+            {'start_time': 'nine', 'end_time': '10:00'},
+            {'start_time': '09:07', 'end_time': '10:00'},
+            {'start_time': '10:00', 'end_time': '10:00'},
+            {'start_time': '11:00', 'end_time': '10:00'},
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                response = self.client.patch(self.url, payload, format='json')
+                self.assertEqual(response.status_code, 400)
+                self.shift.refresh_from_db()
+                self.assertEqual(self.shift.start_time, time(9))
+                self.assertEqual(self.shift.end_time, time(12))
+
+    def test_duplicate_start_time_is_rejected_atomically(self):
+        Shift.objects.create(
+            employee=self.employee,
+            date=self.shift.date,
+            start_time=time(11),
+            end_time=time(13),
+            role='Stylist',
+        )
+        override = WorkbookZoneOverride.objects.create(
+            shift=self.shift, hour=9, zone='GREET', last_edited_by=self.user)
+
+        response = self.client.patch(
+            self.url,
+            {'start_time': '11:00', 'end_time': '14:00'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data['code'], 'duplicate_shift')
+        self.shift.refresh_from_db()
+        self.assertEqual(self.shift.start_time, time(9))
+        self.assertEqual(self.shift.end_time, time(12))
+        self.assertTrue(WorkbookZoneOverride.objects.filter(pk=override.pk).exists())
+
+    def test_changing_start_time_reorders_workbook_rows(self):
+        second_employee = Employee.objects.create(
+            organization=self.organization, name='Blair Stylist')
+        Shift.objects.create(
+            employee=second_employee,
+            date=self.shift.date,
+            start_time=time(10),
+            end_time=time(13),
+            role='Stylist',
+        )
+
+        response = self.client.patch(
+            self.url,
+            {'start_time': '11:00', 'end_time': '14:00'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+        workbook = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        self.assertEqual([row['full_name'] for row in workbook.data['rows']], [
+            'Blair Stylist', 'Alex Stylist',
+        ])
+
+    def test_requires_authentication_and_scopes_shift_to_the_selected_organization(self):
+        other = Organization.objects.create(name='Other Shift Store')
+        OrganizationMembership.objects.create(user=self.user, organization=other)
+        self.client.credentials(HTTP_X_ORGANIZATION_ID=str(other.id))
+        self.assertEqual(self.client.patch(
+            self.url,
+            {'start_time': '09:15', 'end_time': '12:15'},
+            format='json',
+        ).status_code, 404)
+
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.patch(
+            self.url,
+            {'start_time': '09:15', 'end_time': '12:15'},
+            format='json',
+        ).status_code, 401)
 
 
 class WorkbookZoneOverrideTests(TestCase):

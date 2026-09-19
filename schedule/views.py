@@ -12,6 +12,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.conf import settings
 from django.db import IntegrityError, connection, transaction
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from .models import (
@@ -455,6 +456,65 @@ class ShiftListView(APIView):
 
         serializer = ShiftSerializer(shifts, many=True)
         return Response(serializer.data)
+
+
+class ShiftDetailView(APIView):
+    """Update an imported shift for the current organization until the next sync."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, shift_id):
+        organization = organization_for_request(request)
+        if not isinstance(request.data, dict) or set(request.data) != {'start_time', 'end_time'}:
+            return Response(
+                {'error': 'Provide exactly start_time and end_time.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            start_time = _parse_hhmm(request.data['start_time'], 'start_time')
+            end_time = _parse_hhmm(request.data['end_time'], 'end_time')
+        except PayloadError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        if start_time.minute % WORKBOOK_INTERVAL_MINUTES or end_time.minute % WORKBOOK_INTERVAL_MINUTES:
+            return Response(
+                {'error': 'Shift times must use 15-minute increments.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if end_time <= start_time:
+            return Response(
+                {'error': 'end_time must be after start_time.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                shift = get_object_or_404(
+                    Shift.objects.select_for_update().select_related('employee'),
+                    pk=shift_id,
+                    employee__organization=organization,
+                )
+                shift.start_time = start_time
+                shift.end_time = end_time
+                shift.save(update_fields=['start_time', 'end_time'])
+
+                valid_override_hours = [
+                    hour for hour in WORKBOOK_HOURS
+                    if any(
+                        _shift_covers_interval(shift, minute)
+                        for minute in range(
+                            hour * 60,
+                            (hour + 1) * 60,
+                            WORKBOOK_INTERVAL_MINUTES,
+                        )
+                    )
+                ]
+                shift.workbook_zone_overrides.exclude(hour__in=valid_override_hours).delete()
+        except IntegrityError:
+            return Response(
+                {'code': 'duplicate_shift', 'error': 'This employee already has a shift at that start time.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response(ShiftSerializer(shift).data)
 
 
 class EmployeeListView(APIView):
@@ -964,6 +1024,8 @@ class WorkbookView(APIView):
                 'name': display,
                 'full_name': raw,
                 'shift': shift_label,
+                'start_time': shift.start_time.strftime('%H:%M'),
+                'end_time': shift.end_time.strftime('%H:%M'),
                 'role': shift.effective_role,
                 'zones': zones,
                 'zone_overrides': {

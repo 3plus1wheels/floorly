@@ -1,8 +1,9 @@
 from django.urls import path
-from .views import CurrentEmployeeView, EmployeeListView, KpiDayStateView, ScheduleSyncTicketView, ScheduleSyncView, ShiftListView, StaffZoneView, WorkbookView, WorkbookZoneOverrideView
+from .views import CurrentEmployeeView, EmployeeListView, KpiDayStateView, ScheduleSyncTicketView, ScheduleSyncView, ShiftDetailView, ShiftListView, StaffZoneView, WorkbookView, WorkbookZoneOverrideView
 
 urlpatterns = [
     path('shifts/', ShiftListView.as_view(), name='shift_list'),
+    path('shifts/<int:shift_id>/', ShiftDetailView.as_view(), name='shift_detail'),
     path('employees/', EmployeeListView.as_view(), name='employee_list'),
     path('kronos-sync/', ScheduleSyncView.as_view(), name='schedule_sync'),
     path('sync-ticket/', ScheduleSyncTicketView.as_view(), name='schedule_sync_ticket'),

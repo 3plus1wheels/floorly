@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { AlertTriangle, Inbox, LoaderCircle, Printer, Settings2 } from 'lucide-react';
+import { AlertTriangle, Check, Inbox, LoaderCircle, Pencil, Printer, Settings2, X } from 'lucide-react';
 import API_BASE from './config';
 import { useAuth } from './AuthContext';
 import './Workbook.css';
@@ -168,6 +168,23 @@ function formatShortDate(date) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function shiftTimeMinutes(value) {
+  const match = /^(\d{2}):(\d{2})$/.exec(value || '');
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function validShiftTimes(start, end) {
+  const startMinutes = shiftTimeMinutes(start);
+  const endMinutes = shiftTimeMinutes(end);
+  return startMinutes !== null && endMinutes !== null
+    && startMinutes % 15 === 0 && endMinutes % 15 === 0
+    && endMinutes > startMinutes;
+}
+
 const ZONE_STYLE = {
   WOMENS:  { bg: '#e91e63', text: '#fff' },
   MENS:    { bg: '#1976d2', text: '#fff' },
@@ -210,6 +227,48 @@ function ZoneCell({ zone, effective, overridden, selectionLabel, disabled, onCha
         {ZONE_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
       </select>
       <span className="wb-zone-print-value">{effective}</span>
+    </td>
+  );
+}
+
+function ShiftCell({ row, editing, draft, saving, editDisabled, onEdit, onChange, onSave, onCancel }) {
+  const changed = draft.start_time !== row.start_time || draft.end_time !== row.end_time;
+  const canSave = changed && validShiftTimes(draft.start_time, draft.end_time) && !saving;
+
+  return (
+    <td className={`wb-shift-cell${editing ? ' editing' : ''}`}>
+      <span className="wb-shift-print-value">{row.shift}</span>
+      {editing ? (
+        <div className="wb-shift-editor" onKeyDown={event => { if (event.key === 'Escape') onCancel(); }}>
+          <input
+            type="time"
+            step="900"
+            aria-label={`Start time for ${row.name}`}
+            value={draft.start_time}
+            disabled={saving}
+            onChange={event => onChange({ ...draft, start_time: event.target.value })}
+          />
+          <span aria-hidden="true">–</span>
+          <input
+            type="time"
+            step="900"
+            aria-label={`End time for ${row.name}`}
+            value={draft.end_time}
+            disabled={saving}
+            onChange={event => onChange({ ...draft, end_time: event.target.value })}
+          />
+          <div className="wb-shift-editor-actions">
+            <button type="button" aria-label={`Save shift for ${row.name}`} title="Save shift" disabled={!canSave} onClick={onSave}>
+              {saving ? <LoaderCircle className="wb-shift-spinner" /> : <Check />}
+            </button>
+            <button type="button" aria-label={`Cancel shift edit for ${row.name}`} title="Cancel" disabled={saving} onClick={onCancel}><X /></button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="wb-shift-edit-button" aria-label={`Edit shift for ${row.name}`} disabled={editDisabled} onClick={onEdit}>
+          <span>{row.shift}</span><Pencil aria-hidden="true" />
+        </button>
+      )}
     </td>
   );
 }
@@ -480,6 +539,10 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const [overrides, setOverrides] = useState({});
   const [zoneSaveStatus, setZoneSaveStatus] = useState('saved');
   const [zoneSaveError, setZoneSaveError] = useState('');
+  const [editingShiftId, setEditingShiftId] = useState(null);
+  const [shiftDraft, setShiftDraft] = useState({ start_time: '', end_time: '' });
+  const [shiftSaveStatus, setShiftSaveStatus] = useState('saved');
+  const [shiftSaveError, setShiftSaveError] = useState('');
   const [kpiState, setKpiState] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved');
   const [saveError, setSaveError] = useState('');
@@ -517,6 +580,10 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     setOverrides({});
     setZoneSaveStatus('saved');
     setZoneSaveError('');
+    setEditingShiftId(null);
+    setShiftDraft({ start_time: '', end_time: '' });
+    setShiftSaveStatus('saved');
+    setShiftSaveError('');
     setData(null);
     setKpiState(null);
     setGoals(EMPTY_GOALS);
@@ -553,6 +620,47 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   }, [weekStart, activeDay, token, selectedOrganizationId]);
 
   useEffect(() => { fetchWorkbook(); }, [fetchWorkbook, refreshVersion]);
+
+  const startShiftEdit = row => {
+    if (shiftSaveStatus === 'saving') return;
+    setEditingShiftId(row.shift_id);
+    setShiftDraft({ start_time: row.start_time || '', end_time: row.end_time || '' });
+    setShiftSaveStatus('saved');
+    setShiftSaveError('');
+  };
+
+  const cancelShiftEdit = () => {
+    if (shiftSaveStatus === 'saving') return;
+    setEditingShiftId(null);
+    setShiftDraft({ start_time: '', end_time: '' });
+    setShiftSaveStatus('saved');
+    setShiftSaveError('');
+  };
+
+  const saveShiftEdit = async shiftId => {
+    if (shiftSaveStatus === 'saving' || !validShiftTimes(shiftDraft.start_time, shiftDraft.end_time)) return;
+    setShiftSaveStatus('saving');
+    setShiftSaveError('');
+    try {
+      const response = await fetch(`${API_BASE}/api/schedule/shifts/${shiftId}/`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-Organization-ID': selectedOrganizationId,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(shiftDraft),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Could not save shift times.');
+      setEditingShiftId(null);
+      await fetchWorkbook();
+      setShiftSaveStatus('saved');
+    } catch (err) {
+      setShiftSaveStatus('error');
+      setShiftSaveError(err.message || 'Could not save shift times.');
+    }
+  };
 
   const saveKpiPatch = useCallback((patch) => {
     const targetDate = kpiState?.date || requestedDate;
@@ -745,6 +853,11 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
           {zoneSaveError && <span>{zoneSaveError} Your previous saved assignments were restored.</span>}
         </div>
       )}
+      {shiftSaveStatus === 'error' && (
+        <div className="wb-shift-save-error" role="alert">
+          <AlertTriangle /> <span>{shiftSaveError} Check the times and try again.</span>
+        </div>
+      )}
       {/* ── KPI editor panel ── */}
       {editingKpis && (
         <div className="wb-kpi-editor">
@@ -886,7 +999,17 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
                     data.rows.map(row => (
                       <tr key={row.shift_id}>
                         <td className="wb-name-cell">{row.name}</td>
-                        <td className="wb-shift-cell">{row.shift}</td>
+                        <ShiftCell
+                          row={row}
+                          editing={editingShiftId === row.shift_id}
+                          draft={editingShiftId === row.shift_id ? shiftDraft : { start_time: row.start_time, end_time: row.end_time }}
+                          saving={editingShiftId === row.shift_id && shiftSaveStatus === 'saving'}
+                          editDisabled={shiftSaveStatus === 'saving'}
+                          onEdit={() => startShiftEdit(row)}
+                          onChange={setShiftDraft}
+                          onSave={() => saveShiftEdit(row.shift_id)}
+                          onCancel={cancelShiftEdit}
+                        />
                         {data.hours.map(h => {
                           const zone = row.zones[String(h)];
                           const col = data.hours.indexOf(h);

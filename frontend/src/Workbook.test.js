@@ -321,4 +321,86 @@ describe('Workbook KPI persistence', () => {
     expect(await screen.findByText(/Zone save rejected\. Your previous saved assignments were restored\./)).toBeInTheDocument();
     expect(dropdown).toHaveValue('');
   });
+
+  test('edits a shift inline, validates the range, saves it, and reloads the workbook', async () => {
+    let shift = { start_time: '09:00', end_time: '12:00', shift: '9-12' };
+    let workbookLoads = 0;
+    fetchMock.mockImplementation(async (url, options = {}) => {
+      const parsed = new URL(String(url), 'http://localhost');
+      if (parsed.pathname === '/api/schedule/workbook/') {
+        workbookLoads += 1;
+        return response({
+          date: '2026-09-14', day: 'Mon', hours: [9], col_headers: ['9am-10am'],
+          rows: [{
+            shift_id: 401, name: 'ALEX', ...shift,
+            zones: { 9: 'WOMENS' }, zone_overrides: {},
+          }],
+          kpi: makeKpi('2026-09-14'),
+        });
+      }
+      if (parsed.pathname === '/api/schedule/shifts/401/') {
+        const body = JSON.parse(options.body);
+        shift = { ...body, shift: '9:15-12' };
+        return response({ id: 401, ...body });
+      }
+      return response({});
+    });
+
+    render(<Workbook />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit shift for ALEX' }));
+    const start = screen.getByLabelText('Start time for ALEX');
+    const end = screen.getByLabelText('End time for ALEX');
+    expect(start).toHaveAttribute('step', '900');
+    expect(end).toHaveAttribute('step', '900');
+
+    fireEvent.change(end, { target: { value: '09:00' } });
+    expect(screen.getByRole('button', { name: 'Save shift for ALEX' })).toBeDisabled();
+    fireEvent.keyDown(end, { key: 'Escape' });
+    expect(screen.queryByLabelText('Start time for ALEX')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit shift for ALEX' }));
+    fireEvent.change(screen.getByLabelText('Start time for ALEX'), { target: { value: '09:15' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save shift for ALEX' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/schedule/shifts/401/'),
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: expect.objectContaining({ 'X-Organization-ID': '41', 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ start_time: '09:15', end_time: '12:00' }),
+      }),
+    ));
+    await waitFor(() => expect(workbookLoads).toBe(2));
+    expect(await screen.findByRole('button', { name: 'Edit shift for ALEX' })).toHaveTextContent('9:15-12');
+  });
+
+  test('keeps the shift draft open and reports a failed save', async () => {
+    fetchMock.mockImplementation(async (url) => {
+      const parsed = new URL(String(url), 'http://localhost');
+      if (parsed.pathname === '/api/schedule/workbook/') {
+        return response({
+          date: '2026-09-14', day: 'Mon', hours: [9], col_headers: ['9am-10am'],
+          rows: [{
+            shift_id: 501, name: 'ALEX', shift: '9-12', start_time: '09:00', end_time: '12:00',
+            zones: { 9: 'WOMENS' }, zone_overrides: {},
+          }],
+          kpi: makeKpi('2026-09-14'),
+        });
+      }
+      if (parsed.pathname === '/api/schedule/shifts/501/') {
+        return response({ error: 'That shift conflicts with another shift.' }, 409);
+      }
+      return response({});
+    });
+
+    render(<Workbook />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit shift for ALEX' }));
+    fireEvent.change(screen.getByLabelText('End time for ALEX'), { target: { value: '12:15' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save shift for ALEX' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('That shift conflicts with another shift.');
+    expect(screen.getByLabelText('Start time for ALEX')).toHaveValue('09:00');
+    expect(screen.getByLabelText('End time for ALEX')).toHaveValue('12:15');
+    expect(screen.getByRole('button', { name: 'Save shift for ALEX' })).toBeEnabled();
+  });
 });
