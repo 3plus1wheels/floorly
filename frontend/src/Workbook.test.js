@@ -403,4 +403,50 @@ describe('Workbook KPI persistence', () => {
     expect(screen.getByLabelText('End time for ALEX')).toHaveValue('12:15');
     expect(screen.getByRole('button', { name: 'Save shift for ALEX' })).toBeEnabled();
   });
+
+  test('edits only the displayed workbook name for that shift row', async () => {
+    let displayName = 'ALEX';
+    let nameOverride = '';
+    let workbookLoads = 0;
+    fetchMock.mockImplementation(async (url, options = {}) => {
+      const parsed = new URL(String(url), 'http://localhost');
+      if (parsed.pathname === '/api/schedule/workbook/') {
+        workbookLoads += 1;
+        return response({
+          date: '2026-09-14', day: 'Mon', hours: [9], col_headers: ['9am-10am'],
+          rows: [{
+            shift_id: 601, name: displayName, name_override: nameOverride, full_name: 'Alex Taylor',
+            shift: '9-12', start_time: '09:00', end_time: '12:00',
+            zones: { 9: 'WOMENS' }, zone_overrides: {},
+          }],
+          kpi: makeKpi('2026-09-14'),
+        });
+      }
+      if (parsed.pathname === '/api/schedule/shifts/601/') {
+        const body = JSON.parse(options.body);
+        nameOverride = body.display_name.toUpperCase();
+        displayName = nameOverride || 'ALEX';
+        return response({ id: 601, workbook_name_override: nameOverride });
+      }
+      return response({});
+    });
+
+    render(<Workbook />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit workbook name for Alex Taylor' }));
+    const input = screen.getByLabelText('Workbook name for Alex Taylor');
+    expect(input).toHaveValue('ALEX');
+    fireEvent.change(input, { target: { value: 'Day Alex' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save workbook name for Alex Taylor' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/schedule/shifts/601/'),
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ display_name: 'Day Alex' }),
+        headers: expect.objectContaining({ 'X-Organization-ID': '41' }),
+      }),
+    ));
+    await waitFor(() => expect(workbookLoads).toBe(2));
+    expect(await screen.findByRole('button', { name: 'Edit workbook name for Alex Taylor' })).toHaveTextContent('DAY ALEX');
+  });
 });

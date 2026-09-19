@@ -231,6 +231,44 @@ function ZoneCell({ zone, effective, overridden, selectionLabel, disabled, onCha
   );
 }
 
+function NameCell({ row, editing, draft, saving, editDisabled, onEdit, onChange, onSave, onCancel }) {
+  const normalized = draft.trim().replace(/\s+/g, ' ').toUpperCase();
+  const changed = normalized !== row.name;
+  const canSave = changed && normalized.length <= 64 && !saving;
+
+  return (
+    <td className="wb-name-cell">
+      <span className="wb-name-print-value">{row.name}</span>
+      {editing ? (
+        <div className="wb-name-editor" onKeyDown={event => {
+          if (event.key === 'Escape') onCancel();
+          if (event.key === 'Enter' && canSave) { event.preventDefault(); onSave(); }
+        }}>
+          <input
+            type="text"
+            maxLength="64"
+            aria-label={`Workbook name for ${row.full_name || row.name}`}
+            value={draft}
+            disabled={saving}
+            autoFocus
+            onChange={event => onChange(event.target.value)}
+          />
+          <div className="wb-name-editor-actions">
+            <button type="button" aria-label={`Save workbook name for ${row.full_name || row.name}`} disabled={!canSave} onClick={onSave}>
+              {saving ? <LoaderCircle className="wb-shift-spinner" /> : <Check />}
+            </button>
+            <button type="button" aria-label={`Cancel workbook name edit for ${row.full_name || row.name}`} disabled={saving} onClick={onCancel}><X /></button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="wb-name-edit-button" aria-label={`Edit workbook name for ${row.full_name || row.name}`} disabled={editDisabled} onClick={onEdit}>
+          {row.name}
+        </button>
+      )}
+    </td>
+  );
+}
+
 function ShiftCell({ row, editing, draft, saving, editDisabled, onEdit, onChange, onSave, onCancel }) {
   const changed = draft.start_time !== row.start_time || draft.end_time !== row.end_time;
   const canSave = changed && validShiftTimes(draft.start_time, draft.end_time) && !saving;
@@ -545,6 +583,10 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const [shiftDraft, setShiftDraft] = useState({ start_time: '', end_time: '' });
   const [shiftSaveStatus, setShiftSaveStatus] = useState('saved');
   const [shiftSaveError, setShiftSaveError] = useState('');
+  const [editingNameShiftId, setEditingNameShiftId] = useState(null);
+  const [nameDraft, setNameDraft] = useState('');
+  const [nameSaveStatus, setNameSaveStatus] = useState('saved');
+  const [nameSaveError, setNameSaveError] = useState('');
   const [kpiState, setKpiState] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved');
   const [saveError, setSaveError] = useState('');
@@ -586,6 +628,10 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     setShiftDraft({ start_time: '', end_time: '' });
     setShiftSaveStatus('saved');
     setShiftSaveError('');
+    setEditingNameShiftId(null);
+    setNameDraft('');
+    setNameSaveStatus('saved');
+    setNameSaveError('');
     setData(null);
     setKpiState(null);
     setGoals(EMPTY_GOALS);
@@ -624,7 +670,11 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   useEffect(() => { fetchWorkbook(); }, [fetchWorkbook, refreshVersion]);
 
   const startShiftEdit = row => {
-    if (shiftSaveStatus === 'saving') return;
+    if (shiftSaveStatus === 'saving' || nameSaveStatus === 'saving') return;
+    setEditingNameShiftId(null);
+    setNameDraft('');
+    setNameSaveStatus('saved');
+    setNameSaveError('');
     setEditingShiftId(row.shift_id);
     setShiftDraft({ start_time: row.start_time || '', end_time: row.end_time || '' });
     setShiftSaveStatus('saved');
@@ -661,6 +711,51 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     } catch (err) {
       setShiftSaveStatus('error');
       setShiftSaveError(err.message || 'Could not save shift times.');
+    }
+  };
+
+  const startNameEdit = row => {
+    if (shiftSaveStatus === 'saving' || nameSaveStatus === 'saving') return;
+    setEditingShiftId(null);
+    setShiftDraft({ start_time: '', end_time: '' });
+    setShiftSaveStatus('saved');
+    setShiftSaveError('');
+    setEditingNameShiftId(row.shift_id);
+    setNameDraft(row.name_override || row.name || '');
+    setNameSaveStatus('saved');
+    setNameSaveError('');
+  };
+
+  const cancelNameEdit = () => {
+    if (nameSaveStatus === 'saving') return;
+    setEditingNameShiftId(null);
+    setNameDraft('');
+    setNameSaveStatus('saved');
+    setNameSaveError('');
+  };
+
+  const saveNameEdit = async shiftId => {
+    if (nameSaveStatus === 'saving' || nameDraft.length > 64) return;
+    setNameSaveStatus('saving');
+    setNameSaveError('');
+    try {
+      const response = await fetch(`${API_BASE}/api/schedule/shifts/${shiftId}/`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-Organization-ID': selectedOrganizationId,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ display_name: nameDraft }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Could not save the workbook name.');
+      setEditingNameShiftId(null);
+      await fetchWorkbook();
+      setNameSaveStatus('saved');
+    } catch (err) {
+      setNameSaveStatus('error');
+      setNameSaveError(err.message || 'Could not save the workbook name.');
     }
   };
 
@@ -860,6 +955,11 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
           <AlertTriangle /> <span>{shiftSaveError} Check the times and try again.</span>
         </div>
       )}
+      {nameSaveStatus === 'error' && (
+        <div className="wb-shift-save-error" role="alert">
+          <AlertTriangle /> <span>{nameSaveError} Your default name was not changed.</span>
+        </div>
+      )}
       {/* ── KPI editor panel ── */}
       {editingKpis && (
         <div className="wb-kpi-editor">
@@ -1000,13 +1100,23 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
                   ) : (
                     data.rows.map(row => (
                       <tr key={row.shift_id}>
-                        <td className="wb-name-cell">{row.name}</td>
+                        <NameCell
+                          row={row}
+                          editing={editingNameShiftId === row.shift_id}
+                          draft={editingNameShiftId === row.shift_id ? nameDraft : row.name}
+                          saving={editingNameShiftId === row.shift_id && nameSaveStatus === 'saving'}
+                          editDisabled={shiftSaveStatus === 'saving' || nameSaveStatus === 'saving'}
+                          onEdit={() => startNameEdit(row)}
+                          onChange={setNameDraft}
+                          onSave={() => saveNameEdit(row.shift_id)}
+                          onCancel={cancelNameEdit}
+                        />
                         <ShiftCell
                           row={row}
                           editing={editingShiftId === row.shift_id}
                           draft={editingShiftId === row.shift_id ? shiftDraft : { start_time: row.start_time, end_time: row.end_time }}
                           saving={editingShiftId === row.shift_id && shiftSaveStatus === 'saving'}
-                          editDisabled={shiftSaveStatus === 'saving'}
+                          editDisabled={shiftSaveStatus === 'saving' || nameSaveStatus === 'saving'}
                           onEdit={() => startShiftEdit(row)}
                           onChange={setShiftDraft}
                           onSave={() => saveShiftEdit(row.shift_id)}

@@ -1260,6 +1260,52 @@ class ShiftTimeUpdateTests(TestCase):
             format='json',
         ).status_code, 401)
 
+    def test_display_name_override_affects_only_that_shift_day_and_can_be_reset(self):
+        self.employee.workbook_name = 'GLOBAL NAME'
+        self.employee.save(update_fields=['workbook_name'])
+        Shift.objects.create(
+            employee=self.employee,
+            date=date(2026, 9, 8),
+            start_time=time(9),
+            end_time=time(12),
+            role='Stylist',
+        )
+
+        response = self.client.patch(
+            self.url,
+            {'display_name': '  day   name  '},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['workbook_name_override'], 'DAY NAME')
+        self.employee.refresh_from_db()
+        self.assertEqual(self.employee.name, 'Alex Stylist')
+        self.assertEqual(self.employee.workbook_name, 'GLOBAL NAME')
+
+        monday = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        tuesday = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Tue'})
+        self.assertEqual(monday.data['rows'][0]['name'], 'DAY NAME')
+        self.assertEqual(monday.data['rows'][0]['name_override'], 'DAY NAME')
+        self.assertEqual(tuesday.data['rows'][0]['name'], 'GLOBAL NAME')
+        self.assertEqual(tuesday.data['rows'][0]['name_override'], '')
+
+        reset = self.client.patch(self.url, {'display_name': ''}, format='json')
+        self.assertEqual(reset.status_code, 200, reset.data)
+        refreshed = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        self.assertEqual(refreshed.data['rows'][0]['name'], 'GLOBAL NAME')
+
+    def test_rejects_invalid_display_name_values(self):
+        for display_name in (None, 42, 'bad\nname', 'x' * 65):
+            with self.subTest(display_name=display_name):
+                response = self.client.patch(
+                    self.url,
+                    {'display_name': display_name},
+                    format='json',
+                )
+                self.assertEqual(response.status_code, 400)
+        self.shift.refresh_from_db()
+        self.assertEqual(self.shift.workbook_name_override, '')
+
 
 class WorkbookZoneOverrideTests(TestCase):
     def setUp(self):

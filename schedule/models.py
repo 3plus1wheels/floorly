@@ -62,6 +62,7 @@ class Shift(models.Model):
     end_time = models.TimeField()
     role = models.CharField(max_length=255, blank=True)
     occurrence = models.PositiveSmallIntegerField(default=0)
+    workbook_name_override = models.CharField(max_length=64, blank=True, default='')
 
     class Meta:
         unique_together = ('employee', 'date', 'start_time', 'occurrence')

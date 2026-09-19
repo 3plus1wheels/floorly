@@ -459,14 +459,40 @@ class ShiftListView(APIView):
 
 
 class ShiftDetailView(APIView):
-    """Update an imported shift for the current organization until the next sync."""
+    """Update a shift time or its day-specific workbook display name."""
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, shift_id):
         organization = organization_for_request(request)
-        if not isinstance(request.data, dict) or set(request.data) != {'start_time', 'end_time'}:
+        if not isinstance(request.data, dict):
             return Response(
-                {'error': 'Provide exactly start_time and end_time.'},
+                {'error': 'Request body must be an object.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        fields = set(request.data)
+        if fields == {'display_name'}:
+            try:
+                display_name = _clean_text(
+                    request.data['display_name'],
+                    'display_name',
+                    max_length=64,
+                    required=False,
+                )
+            except PayloadError as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            display_name = ' '.join(display_name.split()).upper()
+            shift = get_object_or_404(
+                Shift.objects.select_related('employee'),
+                pk=shift_id,
+                employee__organization=organization,
+            )
+            shift.workbook_name_override = display_name
+            shift.save(update_fields=['workbook_name_override'])
+            return Response(ShiftSerializer(shift).data)
+
+        if fields != {'start_time', 'end_time'}:
+            return Response(
+                {'error': 'Provide display_name or exactly start_time and end_time.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
@@ -967,8 +993,11 @@ class WorkbookView(APIView):
         distinct_employees = {shift.employee_id: shift.employee for shift in shifts}
         default_name_counts = Counter(
             default_workbook_name(employee.name)
-            for employee in distinct_employees.values()
-            if not employee.workbook_name
+            for employee in {
+                shift.employee_id: shift.employee
+                for shift in shifts
+                if not shift.workbook_name_override and not shift.employee.workbook_name
+            }.values()
         )
 
         # Build precise quarter-hour assignments internally. The response is
@@ -1010,7 +1039,9 @@ class WorkbookView(APIView):
 
             raw = shift.employee.name
             employee = shift.employee
-            if employee.workbook_name:
+            if shift.workbook_name_override:
+                display = shift.workbook_name_override.upper()
+            elif employee.workbook_name:
                 display = employee.workbook_name.upper()
             else:
                 first, last_initial = workbook_name_parts(raw)
@@ -1022,6 +1053,7 @@ class WorkbookView(APIView):
             rows.append({
                 'shift_id': shift.id,
                 'name': display,
+                'name_override': shift.workbook_name_override,
                 'full_name': raw,
                 'shift': shift_label,
                 'start_time': shift.start_time.strftime('%H:%M'),

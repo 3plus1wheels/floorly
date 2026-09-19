@@ -9,7 +9,10 @@ class ShiftSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Shift
-        fields = ['id', 'employee_name', 'primary_job', 'date', 'day_label', 'start_time', 'end_time', 'role', 'occurrence']
+        fields = [
+            'id', 'employee_name', 'primary_job', 'date', 'day_label',
+            'start_time', 'end_time', 'role', 'occurrence', 'workbook_name_override',
+        ]
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
