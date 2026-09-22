@@ -1,5 +1,7 @@
 const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const isScheduleRoute = () => /^#\/(?:[^/?#]+\/)*location-schedule\/?(?:\?.*)?$/.test(location.hash);
+const scheduleRequired = () => ({ ok: false, code: 'KRONOS_SCHEDULE_REQUIRED', error: 'Open My Location Schedule in Kronos, then import again.' });
 
 function captureGrid() {
   const headers = [...document.querySelectorAll('.ag-header-cell')].map(cell => ({
@@ -23,6 +25,7 @@ function captureGrid() {
 }
 
 async function captureAllSnapshots() {
+  if (!isScheduleRoute()) return scheduleRequired();
   const viewport = document.querySelector('.ag-body-viewport, .ag-center-cols-viewport');
   if (!document.querySelector('.ag-header-cell-text') || !document.querySelector('.location-schedule-employee-cell__name') || !viewport) {
     return { ok: false, code: 'SCHEDULE_NOT_READY', error: 'Open My Location Schedule, wait for employee rows, then import again.' };
@@ -33,7 +36,9 @@ async function captureAllSnapshots() {
   let previousTop = -1;
   try {
     for (let step = 0; step < 200; step += 1) {
+      if (!isScheduleRoute()) return scheduleRequired();
       await pause(100);
+      if (!isScheduleRoute()) return scheduleRequired();
       const snapshot = captureGrid();
       snapshots.push(snapshot);
       const atBottom = snapshot.scrollTop + snapshot.clientHeight >= snapshot.scrollHeight - 2;
@@ -41,7 +46,7 @@ async function captureAllSnapshots() {
       previousTop = snapshot.scrollTop;
       viewport.scrollTop = Math.min(viewport.scrollHeight, viewport.scrollTop + Math.max(1, viewport.clientHeight - 40));
     }
-    return { ok: true, snapshots };
+    return isScheduleRoute() ? { ok: true, snapshots } : scheduleRequired();
   } finally {
     viewport.scrollTop = originalTop;
   }

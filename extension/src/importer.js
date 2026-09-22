@@ -2,6 +2,7 @@ import { detectVisibleWeekStart, parseGridSnapshots, validateWeek } from './extr
 
 export const LIMITS = Object.freeze({ maxTicketLength: 512, maxSnapshots: 200, maxRows: 5000, maxCells: 50000, maxTitles: 100000, maxPayloadBytes: 5 * 1024 * 1024, maxShifts: 5000 });
 const validDate = value => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T12:00:00Z`).getTime());
+const isScheduleRoute = hash => /^#\/(?:[^/?#]+\/)*location-schedule\/?(?:\?.*)?$/.test(hash);
 const withinLimits = capture => {
   if (!capture || !Array.isArray(capture.snapshots) || capture.snapshots.length > LIMITS.maxSnapshots) return false;
   let rows = 0; let cells = 0; let titles = 0;
@@ -32,9 +33,23 @@ export function createImporter({ chromeApi, fetchImpl, config, now = () => new D
       await chromeApi.tabs.create({ url: config.kronosScheduleUrl, active: true });
       return { ok: false, code: 'KRONOS_TAB_OPENED', error: 'Kronos opened. Log in, open My Location Schedule, then import again.' };
     }
-    const tab = tabs.find(item => item.active) || tabs[0];
-    let tabUrl; try { tabUrl = new URL(tab.url || ''); } catch { tabUrl = null; }
-    if (!tabUrl || !kronosOrigins.includes(tabUrl.origin) || !tabUrl.pathname.startsWith(kronosUrl.pathname)) return { ok: false, code: 'KRONOS_URL_DENIED', error: 'Open authorized Kronos schedule before importing.' };
+    const authorizedTabs = tabs.filter(item => {
+      try {
+        const url = new URL(item.url || '');
+        return kronosOrigins.includes(url.origin);
+      } catch { return false; }
+    });
+    if (!authorizedTabs.length) return { ok: false, code: 'KRONOS_URL_DENIED', error: 'Open authorized Kronos schedule before importing.' };
+    const scheduleTabs = authorizedTabs.filter(item => {
+      const url = new URL(item.url);
+      return url.pathname === kronosUrl.pathname && isScheduleRoute(url.hash);
+    });
+    if (!scheduleTabs.length) {
+      const currentTab = authorizedTabs.find(item => item.active) || authorizedTabs[0];
+      await chromeApi.tabs.update(currentTab.id, { active: true });
+      return { ok: false, code: 'KRONOS_SCHEDULE_REQUIRED', error: 'Open My Location Schedule in Kronos, then import again.' };
+    }
+    const tab = scheduleTabs.find(item => item.active) || scheduleTabs[0];
     let capture;
     try { capture = await chromeApi.tabs.sendMessage(tab.id, { type: 'CAPTURE_KRONOS_GRID' }); }
     catch {

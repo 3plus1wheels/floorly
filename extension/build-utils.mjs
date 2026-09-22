@@ -6,6 +6,10 @@ export function isSemver(value) {
 
 export function assertBuildConfig({ mode, version, webOrigins, apiOrigins, kronosOrigins, kronosScheduleUrl }) {
   if (!isSemver(version)) throw new Error(`Invalid EXTENSION_VERSION: ${version || '(missing)'}`);
+  const scheduleUrl = new URL(kronosScheduleUrl);
+  if (scheduleUrl.protocol !== 'https:' || scheduleUrl.pathname !== '/ess' || scheduleUrl.hash !== '#/') {
+    throw new Error('KRONOS_SCHEDULE_URL must be the HTTPS /ess#/ entry URL');
+  }
   if (mode !== 'production') return;
   if (webOrigins.length !== 1 || webOrigins[0] !== PRODUCTION_WEB_ORIGIN) {
     throw new Error(`Production build requires FLOORLY_WEB_ORIGINS=${PRODUCTION_WEB_ORIGIN}`);
@@ -14,10 +18,6 @@ export function assertBuildConfig({ mode, version, webOrigins, apiOrigins, krono
     if (!origins.length || origins.some(origin => !origin.startsWith('https://'))) throw new Error(`Production build requires HTTPS ${name}`);
   }
   if (webOrigins.some(origin => /^https?:\/\/(localhost|127\.0\.0\.1)(?::\d+)?$/.test(origin))) throw new Error('Production build cannot use localhost origins');
-  const scheduleUrl = new URL(kronosScheduleUrl);
-  if (scheduleUrl.protocol !== 'https:' || scheduleUrl.pathname !== '/ess' || !scheduleUrl.hash.includes('location-schedule')) {
-    throw new Error('Production KRONOS_SCHEDULE_URL must be the full HTTPS location-schedule URL');
-  }
 }
 
 export function contentMatch(origin, pathname) {

@@ -5,7 +5,7 @@ import { createImporter } from '../src/importer.js';
 const config = {
   webOrigins: ['https://floorly.example'],
   apiOrigins: ['https://api.floorly.example'],
-  kronosScheduleUrl: 'https://kronos.example/ess#/location-schedule',
+  kronosScheduleUrl: 'https://kronos.example/ess#/',
   kronosOrigins: ['https://kronos.example', 'https://review-kronos.example'],
 };
 const message = { type: 'IMPORT_KRONOS_SCHEDULE', organization_id: 7, week_start: '2026-09-07', ticket: 'short-ticket', sync_url: 'https://api.floorly.example/api/schedule/kronos-sync/' };
@@ -15,7 +15,7 @@ const snapshots = [{
   rows: [{ rowIndex: '0', employee_name: 'Doe, Jane', primary_job: 'Stylist', cells: [{ colId: 'mon', titles: ['9:00 AM - 5:00 PM'] }] }],
 }];
 
-function harness({ tabs = [{ id: 4, active: true, url: config.kronosScheduleUrl }], capture = { ok: true, snapshots }, response = { ok: true, status: 200, json: async () => ({ imported: 1 }) }, configuration = config } = {}) {
+function harness({ tabs = [{ id: 4, active: true, url: 'https://kronos.example/ess#/3009002/location-schedule' }], capture = { ok: true, snapshots }, response = { ok: true, status: 200, json: async () => ({ imported: 1 }) }, configuration = config } = {}) {
   const calls = { query: [], create: [], update: [], send: [], fetch: [] };
   const chromeApi = { tabs: {
     query: async value => (calls.query.push(value), tabs),
@@ -38,6 +38,43 @@ test('opens Kronos when absent without uploading ticket', async () => {
   const { calls, run } = harness({ tabs: [] });
   assert.equal((await run(message, sender)).code, 'KRONOS_TAB_OPENED');
   assert.deepEqual(calls.create, [{ url: config.kronosScheduleUrl, active: true }]);
+  assert.equal(calls.fetch.length, 0);
+});
+
+test('focuses an existing Kronos tab outside the schedule without uploading', async () => {
+  const { calls, run } = harness({ tabs: [{ id: 6, active: true, url: 'https://kronos.example/login' }] });
+  assert.equal((await run(message, sender)).code, 'KRONOS_SCHEDULE_REQUIRED');
+  assert.deepEqual(calls.update, [[6, { active: true }]]);
+  assert.equal(calls.create.length, 0);
+  assert.equal(calls.send.length, 0);
+  assert.equal(calls.fetch.length, 0);
+});
+
+test('accepts different account contexts and prefers an active schedule tab', async () => {
+  const { calls, run } = harness({ tabs: [
+    { id: 4, active: false, url: 'https://kronos.example/ess#/3009002/location-schedule' },
+    { id: 5, active: true, url: 'https://kronos.example/ess#/8472911/location-schedule' },
+  ] });
+  assert.equal((await run(message, sender)).code, 'IMPORT_COMPLETE');
+  assert.equal(calls.send[0][0], 5);
+});
+
+test('selects a schedule tab when the active Kronos tab is on another route', async () => {
+  const { calls, run } = harness({ tabs: [
+    { id: 6, active: true, url: config.kronosScheduleUrl },
+    { id: 7, active: false, url: 'https://kronos.example/ess#/8472911/location-schedule' },
+  ] });
+  assert.equal((await run(message, sender)).code, 'IMPORT_COMPLETE');
+  assert.equal(calls.send[0][0], 7);
+});
+
+test('does not capture a lookalike route or path', async () => {
+  const { calls, run } = harness({ tabs: [
+    { id: 8, active: true, url: 'https://kronos.example/ess#/8472911/location-schedule-other' },
+    { id: 9, active: false, url: 'https://kronos.example/ess-other#/8472911/location-schedule' },
+  ] });
+  assert.equal((await run(message, sender)).code, 'KRONOS_SCHEDULE_REQUIRED');
+  assert.equal(calls.send.length, 0);
   assert.equal(calls.fetch.length, 0);
 });
 

@@ -1,12 +1,13 @@
 import API_BASE from './config';
 
-export const EXTENSION_ID = process.env.REACT_APP_FLOORLY_EXTENSION_ID || '';
+export const EXTENSION_ID = process.env.REACT_APP_FLOORLY_EXTENSION_ID || 'picamnkkmfkicagkibpednpkjbdioodh';
 export const EXTENSION_STORE_URL = process.env.REACT_APP_FLOORLY_EXTENSION_STORE_URL || '';
 
 export const KRONOS_ERRORS = {
   EXTENSION_NOT_CONFIGURED: 'Kronos extension is not configured for this Floorly build.',
   EXTENSION_MISSING: 'Floorly Kronos extension is not installed or enabled.',
   KRONOS_TAB_OPENED: 'Kronos opened. Log in, open My Location Schedule, then click Import again.',
+  KRONOS_SCHEDULE_REQUIRED: 'Open My Location Schedule in Kronos, then click Import again.',
   KRONOS_RELOAD_REQUIRED: 'Reload Kronos after installing the extension, then click Import again.',
   LOGIN_REQUIRED: 'Log in to Kronos, open My Location Schedule, then click Import again.',
   GRID_UNAVAILABLE: 'Open My Location Schedule, wait for schedule rows, then click Import again.',
