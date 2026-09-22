@@ -97,6 +97,26 @@ test('identifies readable headers with no parsed shifts without uploading', asyn
   assert.equal(calls.fetch.length, 0);
 });
 
+test('reports an overnight shift separately without uploading', async () => {
+  const overnight = [{ headers: [{ colId: 'mon', label: 'Mon 09/07' }], rows: [{
+    rowIndex: '0', employee_name: 'Test Employee', primary_job: 'Shipment',
+    cells: [{ colId: 'mon', titles: ['10:00 PM - 6:00 AM'] }],
+  }] }];
+  const { calls, run } = harness({ capture: { ok: true, snapshots: overnight } });
+  assert.equal((await run(message, sender)).code, 'SHIFT_TIME_ORDER_INVALID');
+  assert.equal(calls.fetch.length, 0);
+});
+
+test('reports a shift mapped outside the selected week without uploading', async () => {
+  const outside = [{ headers: [{ colId: 'mon', label: 'Mon 09/07' }, { colId: 'next', label: '09/14' }], rows: [{
+    rowIndex: '0', employee_name: 'Test Employee', primary_job: 'Stylist',
+    cells: [{ colId: 'next', titles: ['9:00 AM - 5:00 PM'] }],
+  }] }];
+  const { calls, run } = harness({ capture: { ok: true, snapshots: outside } });
+  assert.equal((await run(message, sender)).code, 'SHIFT_OUTSIDE_WEEK');
+  assert.equal(calls.fetch.length, 0);
+});
+
 test('uploads validated current week with scoped ticket and organization', async () => {
   const { calls, run } = harness();
   const result = await run(message, sender);

@@ -6,6 +6,7 @@ const MONTH_INDEX = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, au
 const MONTH_RE = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
 const DATED_HEADER_RE = new RegExp(`\\b(?:20\\d{2}-\\d{1,2}-\\d{1,2}|\\d{1,2}[/-]\\d{1,2}|${MONTH_RE}\\.?\\s+\\d{1,2}|\\d{1,2}\\s+${MONTH_RE})\\b`, 'i');
 const text = value => String(value ?? '').replace(/\s+/g, ' ').trim();
+const extractionError = (code, message) => Object.assign(new Error(message), { code });
 const addDays = (iso, days) => {
   const date = new Date(`${iso}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -33,7 +34,7 @@ function roleFor(rawRole, primaryJob) {
   if (/\b(cel|manager|management|supervisor)\b/i.test(job)) return 'CEL';
   if (/\b(shipment|stock|inventory|boh)\b/i.test(job)) return 'BOH';
   if (job) return 'Stylist';
-  throw new Error('Shift missing primary job/role');
+  throw extractionError('SHIFT_JOB_MISSING', 'Shift missing primary job/role');
 }
 
 export function parseShiftTitle(title) {
@@ -50,8 +51,8 @@ export function normalizeShift(raw) {
     end_time: time(raw.end_time || raw.endTime),
     role: roleFor(raw.role, primaryJob),
   };
-  if (!shift.employee_name || !DATE_RE.test(shift.date) || !TIME_RE.test(shift.start_time) || !TIME_RE.test(shift.end_time)) throw new Error(`Invalid shift: ${JSON.stringify(shift)}`);
-  if (shift.end_time <= shift.start_time) throw new Error(`Shift end must follow start for ${shift.employee_name}`);
+  if (!shift.employee_name || !DATE_RE.test(shift.date) || !TIME_RE.test(shift.start_time) || !TIME_RE.test(shift.end_time)) throw extractionError('SHIFT_FIELD_INVALID', 'Shift has an invalid employee name, date, or time');
+  if (shift.end_time <= shift.start_time) throw extractionError('SHIFT_TIME_ORDER_INVALID', 'Shift end must follow start');
   return shift;
 }
 
@@ -145,7 +146,7 @@ export function validateWeek(rawShifts, expectedMonday) {
   if (!Array.isArray(rawShifts) || !rawShifts.length) throw new Error(`No shifts extracted for week ${expectedMonday}`);
   const end = addDays(expectedMonday, 6);
   const shifts = rawShifts.map(normalizeShift);
-  for (const shift of shifts) if (shift.date < expectedMonday || shift.date > end) throw new Error(`Shift ${shift.date} outside ${expectedMonday}..${end}`);
+  for (const shift of shifts) if (shift.date < expectedMonday || shift.date > end) throw extractionError('SHIFT_OUTSIDE_WEEK', `Shift ${shift.date} outside ${expectedMonday}..${end}`);
   return { week_start: expectedMonday, week_end: end, shifts };
 }
 

@@ -73,7 +73,16 @@ export function createImporter({ chromeApi, fetchImpl, config, now = () => new D
       if (!shifts.length) return { ok: false, code: 'NO_SHIFTS_EXTRACTED', error: 'Dates were found, but no readable shifts were found in the visible Kronos grid.' };
       week = validateWeek(shifts, expectedMonday);
       if (week.shifts.length > LIMITS.maxShifts) return { ok: false, code: 'PAYLOAD_TOO_LARGE', error: 'Schedule contains too many shifts.' };
-    } catch { return { ok: false, code: 'SHIFT_DATA_UNREADABLE', error: 'A Kronos shift could not be parsed into a valid date, time, and job.' }; }
+    } catch (error) {
+      const messages = {
+        SHIFT_JOB_MISSING: 'A Kronos shift is missing its job. Check the Primary Job column.',
+        SHIFT_FIELD_INVALID: 'A Kronos shift has an invalid name, date, or time.',
+        SHIFT_TIME_ORDER_INVALID: 'A Kronos shift ends at or before its start time. Check for an overnight shift.',
+        SHIFT_OUTSIDE_WEEK: 'A Kronos shift mapped outside the selected week. Check the date header above that shift.',
+      };
+      const code = Object.hasOwn(messages, error?.code) ? error.code : 'SHIFT_DATA_UNREADABLE';
+      return { ok: false, code, error: messages[code] || 'A Kronos shift could not be parsed into a valid date, time, and job.' };
+    }
     const response = await fetchImpl(syncUrl.href, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `ScheduleSync ${message.ticket}`, 'X-Organization-ID': String(organizationId) },

@@ -34,6 +34,16 @@ test('detects visible week from dated Kronos headers', () => {
   assert.throws(() => detectVisibleWeekStart([{ headers: [{ label: 'Wednesday' }] }], '2026-09-14'), /Cannot verify/);
 });
 
+test('parses a shift across the September to October week boundary', () => {
+  const snapshots = [{
+    headers: ['Mon 09/28', 'Tue 09/29', 'Wed 09/30', 'Thu 10/01', 'Fri 10/02', 'Sat 10/03', 'Sun 10/04']
+      .map((label, index) => ({ colId: `day-${index}`, label })),
+    rows: [{ rowIndex: '0', employee_name: 'Test Employee', primary_job: 'Stylist', cells: [{ colId: 'day-3', titles: ['9:00 AM - 5:00 PM'] }] }],
+  }];
+  assert.equal(detectVisibleWeekStart(snapshots, '2026-09-28'), '2026-09-28');
+  assert.equal(validateWeek(parseGridSnapshots(snapshots, '2026-09-28'), '2026-09-28').shifts[0].date, '2026-10-01');
+});
+
 test('stitches virtual AG Grid fragments without omissions or duplicate snapshots', async () => {
   const snapshots = JSON.parse(await readFile(new URL('./fixtures/kronos-ag-grid-snapshots.json', import.meta.url), 'utf8'));
   const shifts = parseGridSnapshots(snapshots, '2026-09-07');
