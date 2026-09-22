@@ -54,6 +54,6 @@ async function captureAllSnapshots() {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'CAPTURE_KRONOS_GRID') return false;
-  captureAllSnapshots().then(sendResponse).catch(error => sendResponse({ ok: false, code: 'EXTRACTION_FAILED', error: error.message }));
+  captureAllSnapshots().then(sendResponse).catch(() => sendResponse({ ok: false, code: 'GRID_CAPTURE_FAILED', error: 'Could not capture the Kronos schedule grid.' }));
   return true;
 });

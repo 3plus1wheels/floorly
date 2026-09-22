@@ -13,7 +13,7 @@ const webOrigins = parseOrigins('FLOORLY_WEB_ORIGINS', mode === 'production' ? P
 const apiOrigins = parseOrigins('FLOORLY_API_ORIGINS', mode === 'production' ? PRODUCTION_WEB_ORIGIN : 'http://localhost:3000,http://127.0.0.1:8000');
 const kronosScheduleUrl = process.env.KRONOS_SCHEDULE_URL || 'https://levistrauss-sso.prd.mykronos.com/ess#/';
 const kronosOrigins = parseOrigins('KRONOS_ALLOWED_ORIGINS', new URL(kronosScheduleUrl).origin);
-const version = process.env.EXTENSION_VERSION || (mode === 'production' ? '' : '1.0.2');
+const version = process.env.EXTENSION_VERSION || (mode === 'production' ? '' : '1.0.3');
 assertBuildConfig({ mode, version, webOrigins, apiOrigins, kronosOrigins, kronosScheduleUrl });
 if (!kronosOrigins.includes(new URL(kronosScheduleUrl).origin)) throw new Error('KRONOS_SCHEDULE_URL origin must be listed in KRONOS_ALLOWED_ORIGINS');
 const publicKey = (await readFile(resolve(root, 'public-key.txt'), 'utf8')).trim();

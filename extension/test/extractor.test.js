@@ -21,12 +21,16 @@ test('validates existing normalized fixture', async () => {
 test('parses titles and header dates', () => {
   assert.deepEqual(parseShiftTitle('11:00 AM - 3:45 PM [4:45]'), [{ start_time: '11:00', end_time: '15:45' }]);
   assert.equal(parseShiftTitle('9:00 AM - 12:00 PM / 1:00 PM - 5:00 PM').length, 2);
+  assert.deepEqual(parseShiftTitle('9:00 - 17:30'), [{ start_time: '09:00', end_time: '17:30' }]);
   assert.equal(parseHeaderDate('Fri 01/01', '2020-12-28'), '2021-01-01');
+  assert.equal(parseHeaderDate('Mon Sep 21', '2026-09-21'), '2026-09-21');
+  assert.equal(parseHeaderDate('Tue 22 September 2026', '2026-09-21'), '2026-09-22');
 });
 
 test('detects visible week from dated Kronos headers', () => {
   const snapshots = [{ headers: [{ colId: 'wed', label: 'Wed 09/16' }] }];
   assert.equal(detectVisibleWeekStart(snapshots, '2026-09-14'), '2026-09-14');
+  assert.equal(detectVisibleWeekStart([{ headers: [{ label: 'Mon Sep 21' }, { label: 'Tue 22 September' }] }], '2026-09-21'), '2026-09-21');
   assert.throws(() => detectVisibleWeekStart([{ headers: [{ label: 'Wednesday' }] }], '2026-09-14'), /Cannot verify/);
 });
 

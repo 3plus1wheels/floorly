@@ -62,14 +62,18 @@ export function createImporter({ chromeApi, fetchImpl, config, now = () => new D
     }
     if (!withinLimits(capture)) return { ok: false, code: 'PAYLOAD_TOO_LARGE', error: 'Schedule is too large to import safely.' };
     let week;
+    let visibleMonday;
+    try { visibleMonday = detectVisibleWeekStart(capture.snapshots, expectedMonday); }
+    catch { return { ok: false, code: 'WEEK_HEADERS_UNREADABLE', error: 'Could not identify dates in the visible Kronos schedule headers.' }; }
+    if (visibleMonday !== expectedMonday) {
+      return { ok: false, code: 'WEEK_MISMATCH', error: `Kronos shows week ${visibleMonday}; Floorly shows week ${expectedMonday}. Open same week in both, then retry.` };
+    }
     try {
-      const visibleMonday = detectVisibleWeekStart(capture.snapshots, expectedMonday);
-      if (visibleMonday !== expectedMonday) {
-        return { ok: false, code: 'WEEK_MISMATCH', error: `Kronos shows week ${visibleMonday}; Floorly shows week ${expectedMonday}. Open same week in both, then retry.` };
-      }
-      week = validateWeek(parseGridSnapshots(capture.snapshots, expectedMonday), expectedMonday);
+      const shifts = parseGridSnapshots(capture.snapshots, expectedMonday);
+      if (!shifts.length) return { ok: false, code: 'NO_SHIFTS_EXTRACTED', error: 'Dates were found, but no readable shifts were found in the visible Kronos grid.' };
+      week = validateWeek(shifts, expectedMonday);
       if (week.shifts.length > LIMITS.maxShifts) return { ok: false, code: 'PAYLOAD_TOO_LARGE', error: 'Schedule contains too many shifts.' };
-    } catch (error) { return { ok: false, code: 'EXTRACTION_FAILED', error: error.message }; }
+    } catch { return { ok: false, code: 'SHIFT_DATA_UNREADABLE', error: 'A Kronos shift could not be parsed into a valid date, time, and job.' }; }
     const response = await fetchImpl(syncUrl.href, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `ScheduleSync ${message.ticket}`, 'X-Organization-ID': String(organizationId) },

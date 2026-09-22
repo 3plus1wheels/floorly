@@ -85,6 +85,18 @@ test('grid unavailable focuses Kronos and does not upload', async () => {
   assert.equal(calls.fetch.length, 0);
 });
 
+test('identifies unreadable date headers without uploading', async () => {
+  const { calls, run } = harness({ capture: { ok: true, snapshots: [{ headers: [{ label: 'Monday' }], rows: [] }] } });
+  assert.equal((await run(message, sender)).code, 'WEEK_HEADERS_UNREADABLE');
+  assert.equal(calls.fetch.length, 0);
+});
+
+test('identifies readable headers with no parsed shifts without uploading', async () => {
+  const { calls, run } = harness({ capture: { ok: true, snapshots: [{ headers: [{ colId: 'mon', label: 'Mon 09/07' }], rows: [] }] } });
+  assert.equal((await run(message, sender)).code, 'NO_SHIFTS_EXTRACTED');
+  assert.equal(calls.fetch.length, 0);
+});
+
 test('uploads validated current week with scoped ticket and organization', async () => {
   const { calls, run } = harness();
   const result = await run(message, sender);
