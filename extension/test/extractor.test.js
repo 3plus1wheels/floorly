@@ -44,6 +44,17 @@ test('parses a shift across the September to October week boundary', () => {
   assert.equal(validateWeek(parseGridSnapshots(snapshots, '2026-09-28'), '2026-09-28').shifts[0].date, '2026-10-01');
 });
 
+test('skips zero-duration grid entries and keeps valid shifts', () => {
+  const snapshots = [{ headers: [{ colId: 'mon', label: 'Mon 09/28' }], rows: [{
+    rowIndex: '0', employee_name: 'Test Employee', primary_job: 'Stylist',
+    cells: [{ colId: 'mon', titles: ['9:00 AM - 9:00 AM', '10:00 AM - 2:00 PM'] }],
+  }] }];
+  const shifts = parseGridSnapshots(snapshots, '2026-09-28');
+  assert.equal(shifts.length, 1);
+  assert.equal(shifts[0].start_time, '10:00');
+  assert.equal(shifts[0].end_time, '14:00');
+});
+
 test('stitches virtual AG Grid fragments without omissions or duplicate snapshots', async () => {
   const snapshots = JSON.parse(await readFile(new URL('./fixtures/kronos-ag-grid-snapshots.json', import.meta.url), 'utf8'));
   const shifts = parseGridSnapshots(snapshots, '2026-09-07');

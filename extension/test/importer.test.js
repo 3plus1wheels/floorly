@@ -107,6 +107,28 @@ test('reports an overnight shift separately without uploading', async () => {
   assert.equal(calls.fetch.length, 0);
 });
 
+test('imports valid shifts while omitting zero-duration entries', async () => {
+  const mixed = [{ headers: [{ colId: 'mon', label: 'Mon 09/07' }], rows: [{
+    rowIndex: '0', employee_name: 'Test Employee', primary_job: 'Stylist',
+    cells: [{ colId: 'mon', titles: ['9:00 AM - 9:00 AM', '10:00 AM - 2:00 PM'] }],
+  }] }];
+  const { calls, run } = harness({ capture: { ok: true, snapshots: mixed } });
+  assert.equal((await run(message, sender)).code, 'IMPORT_COMPLETE');
+  const shifts = JSON.parse(calls.fetch[0][1].body).weeks[0].shifts;
+  assert.equal(shifts.length, 1);
+  assert.equal(shifts[0].start_time, '10:00');
+});
+
+test('does not upload when every entry has zero duration', async () => {
+  const zeroOnly = [{ headers: [{ colId: 'mon', label: 'Mon 09/07' }], rows: [{
+    rowIndex: '0', employee_name: 'Test Employee', primary_job: 'Stylist',
+    cells: [{ colId: 'mon', titles: ['9:00 AM - 9:00 AM'] }],
+  }] }];
+  const { calls, run } = harness({ capture: { ok: true, snapshots: zeroOnly } });
+  assert.equal((await run(message, sender)).code, 'NO_SHIFTS_EXTRACTED');
+  assert.equal(calls.fetch.length, 0);
+});
+
 test('reports a shift mapped outside the selected week without uploading', async () => {
   const outside = [{ headers: [{ colId: 'mon', label: 'Mon 09/07' }, { colId: 'next', label: '09/14' }], rows: [{
     rowIndex: '0', employee_name: 'Test Employee', primary_job: 'Stylist',

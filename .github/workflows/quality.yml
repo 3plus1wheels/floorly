@@ -30,14 +30,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: cp .env.example .env
       - run: npm run extension:build
         env:
           BUILD_MODE: production
-          EXTENSION_VERSION: 1.0.1
           FLOORLY_WEB_ORIGINS: https://floorly.vovanguyen.com
           FLOORLY_API_ORIGINS: https://floorly.vovanguyen.com
           KRONOS_ALLOWED_ORIGINS: https://levistrauss-sso.prd.mykronos.com
-          KRONOS_SCHEDULE_URL: 'https://levistrauss-sso.prd.mykronos.com/ess#/3009002/location-schedule'
+          KRONOS_SCHEDULE_URL: 'https://levistrauss-sso.prd.mykronos.com/ess#/'
       - uses: actions/setup-node@v4
         with:
           node-version: 20

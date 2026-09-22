@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertBuildConfig, contentMatch } from '../build-utils.mjs';
+import { assertBuildConfig, contentMatch, extensionVersionFromEnv } from '../build-utils.mjs';
+
+test('reads extension version only from .env contents', () => {
+  assert.equal(extensionVersionFromEnv('BUILD_MODE=production\nEXTENSION_VERSION=1.0.5\n'), '1.0.5');
+  assert.equal(extensionVersionFromEnv('EXTENSION_VERSION="1.0.5"\r\n'), '1.0.5');
+  assert.throws(() => extensionVersionFromEnv('BUILD_MODE=production\n'), /Missing EXTENSION_VERSION/);
+});
 
 test('production build requires exact Floorly HTTPS origin and valid semver', () => {
   const kronosScheduleUrl = 'https://kronos.example/ess#/';

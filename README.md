@@ -49,6 +49,8 @@ npm install
 npm run extension:build
 ```
 
+`npm run extension:build` requires `.env`. Set `EXTENSION_VERSION` there; the build reads that value directly and fails if it is missing or invalid.
+
 Then:
 
 1. Copy the built `extension/dist` folder to a stable location on the Edge computer. Keep the whole folder together, with `manifest.json` directly inside it. Do not select the ZIP or the parent `extension` folder.
@@ -73,11 +75,10 @@ FLOORLY_WEB_ORIGINS=https://floorly.vovanguyen.com \
 FLOORLY_API_ORIGINS=https://floorly.vovanguyen.com \
 KRONOS_ALLOWED_ORIGINS=https://levistrauss-sso.prd.mykronos.com \
 KRONOS_SCHEDULE_URL='https://levistrauss-sso.prd.mykronos.com/ess#/' \
-EXTENSION_VERSION=1.0.4 \
 npm run extension:build
 ```
 
-For Edge **Load unpacked**, distribute the generated `extension/dist` folder. The ZIP (`extension/floorly-kronos-1.0.4.zip`) is for a later store submission, not for **Load unpacked**. Manifest grants only configured Floorly, backend, and Kronos origins; no cookies, history, `<all_urls>`, or broad `tabs` permission. `extension/public-key.txt` is the public identity key; no private key is stored in this repository. A future store-assigned ID may differ, so verify it before changing the frontend configuration.
+For Edge **Load unpacked**, distribute the generated `extension/dist` folder. The versioned ZIP in `extension/` is for a later store submission, not for **Load unpacked**. Manifest grants only configured Floorly, backend, and Kronos origins; no cookies, history, `<all_urls>`, or broad `tabs` permission. `extension/public-key.txt` is the public identity key; no private key is stored in this repository. A future store-assigned ID may differ, so verify it before changing the frontend configuration.
 
 For the unpacked Edge build, set these frontend build variables and redeploy if they are managed outside this repository:
 

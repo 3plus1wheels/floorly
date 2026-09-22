@@ -8,6 +8,6 @@
   },
   "scripts": {
     "test": "node --test extension/test/*.test.js",
-    "extension:build": "node --env-file-if-exists=.env extension/build.mjs"
+    "extension:build": "node --env-file=.env extension/build.mjs"
   }
 }

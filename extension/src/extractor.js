@@ -135,7 +135,12 @@ export function parseGridSnapshots(snapshots, expectedMonday) {
     for (const [colId, titles] of row.cells) {
       const date = headers.get(colId);
       if (!date) continue;
-      for (const title of titles.values()) for (const range of parseShiftTitle(title)) shifts.push(normalizeShift({ ...range, employee_name: row.employee_name, primary_job: row.primary_job, date }));
+      for (const title of titles.values()) {
+        for (const range of parseShiftTitle(title)) {
+          if (range.start_time === range.end_time) continue;
+          shifts.push(normalizeShift({ ...range, employee_name: row.employee_name, primary_job: row.primary_job, date }));
+        }
+      }
     }
   }
   return shifts;

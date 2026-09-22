@@ -4,6 +4,13 @@ export function isSemver(value) {
   return typeof value === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(value);
 }
 
+export function extensionVersionFromEnv(contents) {
+  const line = contents.split(/\r?\n/).find(value => /^\s*EXTENSION_VERSION\s*=/.test(value));
+  if (!line) throw new Error('Missing EXTENSION_VERSION in .env');
+  const value = line.slice(line.indexOf('=') + 1).trim();
+  return value.replace(/^(['"])(.*)\1$/, '$2');
+}
+
 export function assertBuildConfig({ mode, version, webOrigins, apiOrigins, kronosOrigins, kronosScheduleUrl }) {
   if (!isSemver(version)) throw new Error(`Invalid EXTENSION_VERSION: ${version || '(missing)'}`);
   const scheduleUrl = new URL(kronosScheduleUrl);
