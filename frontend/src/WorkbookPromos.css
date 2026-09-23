@@ -1,0 +1,117 @@
+.wb-promos {
+  margin: 14px 0 0;
+  border: 1px solid #aab3c2;
+  background: #fff;
+  color: #172033;
+  font-size: 13px;
+}
+
+.wb-promos__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 9px;
+  background: #c90000;
+  color: #fff;
+}
+
+.wb-promos__header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .2em;
+}
+
+.wb-promos__scope {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.wb-promos__body { padding: 8px; }
+.wb-promos__rows { display: grid; gap: 5px; }
+
+.wb-promos__row {
+  display: flex;
+  min-width: 0;
+  gap: 4px;
+}
+
+.wb-promos__row input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 31px;
+  border: 1px solid #b7c1cf;
+  border-radius: 2px;
+  padding: 5px 7px;
+  background: #fffef8;
+  color: #172033;
+  font: inherit;
+}
+
+.wb-promos__row input:focus { outline: 2px solid #3282ce; outline-offset: 1px; }
+.wb-promos__print-value { display: none; }
+
+.wb-promos button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 29px;
+  border: 1px solid #aab3c2;
+  border-radius: 3px;
+  padding: 4px 7px;
+  background: #f7f9fc;
+  color: #273248;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.wb-promos button:hover:not(:disabled) { background: #e8eef7; }
+.wb-promos button:disabled { opacity: .52; cursor: not-allowed; }
+.wb-promos__row button { flex: 0 0 30px; }
+
+.wb-promos__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.wb-promos__empty,
+.wb-promos__message,
+.wb-promos__dirty,
+.wb-promos__notice,
+.wb-promos__error {
+  padding: 5px 2px;
+  font-size: 11px;
+}
+
+.wb-promos__empty,
+.wb-promos__message { color: #687386; }
+.wb-promos__dirty { color: #8a5800; font-weight: 700; }
+.wb-promos__notice { color: #22623a; }
+.wb-promos__error { color: #a60000; }
+.wb-promos__error button { margin-left: 5px; }
+
+@media print {
+  .wb-promos__actions,
+  .wb-promos__dirty,
+  .wb-promos__notice,
+  .wb-promos__error { display: none !important; }
+  .wb-promos { break-inside: avoid; }
+  .wb-promos__row input { display: none; }
+  .wb-promos__print-value {
+    display: block;
+    min-height: 3mm;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  .wb-promos__row button { display: none; }
+}

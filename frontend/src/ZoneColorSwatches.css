@@ -1,0 +1,52 @@
+.zone-color-swatches {
+  display: grid;
+  grid-template-columns: repeat(7, 28px);
+  gap: 7px;
+  align-items: center;
+}
+
+.zone-color-swatch {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #9ca3af;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.zone-color-swatch:hover {
+  border-color: #111827;
+}
+
+.zone-color-swatch:focus-visible {
+  outline: 3px solid #111827;
+  outline-offset: 3px;
+  z-index: 1;
+}
+
+.zone-color-swatch.is-selected {
+  border: 2px solid #111827;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px #111827;
+}
+
+.zone-color-swatch-chip {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 16%);
+}
+
+@media (max-width: 480px) {
+  .zone-color-swatches {
+    grid-template-columns: repeat(7, 26px);
+    gap: 6px;
+  }
+
+  .zone-color-swatch {
+    width: 26px;
+    height: 26px;
+  }
+}

@@ -17,7 +17,8 @@ from django.utils import timezone
 
 from .models import (
     Employee, KronosImportConsent, ScheduleSyncTokenUse, Shift, StaffZone,
-    WorkbookZoneOverride, WORKBOOK_ZONE_CHOICES, ZONE_FIELDS,
+    WorkbookZoneOverride, WorkbookPromoRows, WorkbookPromoDayOverride,
+    WORKBOOK_ZONE_CHOICES, ZONE_FIELDS,
 )
 from .serializers import ShiftSerializer, EmployeeSerializer, StaffZoneSerializer
 from .authentication import ScheduleSyncAuthentication, ScheduleSyncToken
@@ -1167,6 +1168,92 @@ class WorkbookZoneOverrideView(APIView):
                         hour=hour,
                         defaults={'zone': zone, 'last_edited_by': request.user},
                     )
+        return Response(self._payload(organization, target_date))
+
+
+class WorkbookPromoRowsView(APIView):
+    """Read and save shared or date-specific plain-text workbook rows."""
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _payload(organization, target_date):
+        shared = WorkbookPromoRows.objects.filter(organization=organization).first()
+        override = WorkbookPromoDayOverride.objects.filter(
+            organization=organization, business_date=target_date,
+        ).first()
+        shared_rows = shared.rows if shared else []
+        return {
+            'date': target_date.isoformat(),
+            'rows': override.rows if override else shared_rows,
+            'source': 'date' if override else 'shared',
+            'has_override': override is not None,
+            'shared_rows': shared_rows,
+        }
+
+    @staticmethod
+    def _validate_rows(rows):
+        if not isinstance(rows, list) or len(rows) > 32:
+            raise ValueError('rows must be a list with no more than 32 lines.')
+        cleaned = []
+        total = 0
+        for row in rows:
+            if not isinstance(row, str):
+                raise ValueError('Every row must be plain text.')
+            value = row.strip()
+            if len(value) > 240 or '\n' in value or '\r' in value or '\x00' in value:
+                raise ValueError('Each row must be a single line of at most 240 characters.')
+            if any(ord(char) < 32 and char != '\t' for char in value):
+                raise ValueError('Rows cannot contain control characters.')
+            total += len(value)
+            if total > 4096:
+                raise ValueError('The combined row text cannot exceed 4096 characters.')
+            cleaned.append(value)
+        return cleaned
+
+    def get(self, request, business_date):
+        organization = organization_for_request(request)
+        try:
+            target_date = date.fromisoformat(business_date)
+        except ValueError:
+            return Response({'error': 'Invalid date.'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self._payload(organization, target_date))
+
+    def patch(self, request, business_date):
+        organization = organization_for_request(request)
+        try:
+            target_date = date.fromisoformat(business_date)
+        except ValueError:
+            return Response({'error': 'Invalid date.'}, status=status.HTTP_400_BAD_REQUEST)
+        scope = request.data.get('scope')
+        if scope not in ('date', 'shared'):
+            return Response({'error': 'scope must be "date" or "shared".'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            rows = self._validate_rows(request.data.get('rows'))
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            if scope == 'shared':
+                WorkbookPromoRows.objects.update_or_create(
+                    organization=organization, defaults={'rows': rows},
+                )
+            else:
+                WorkbookPromoDayOverride.objects.update_or_create(
+                    organization=organization, business_date=target_date,
+                    defaults={'rows': rows},
+                )
+        return Response(self._payload(organization, target_date))
+
+    def delete(self, request, business_date):
+        organization = organization_for_request(request)
+        try:
+            target_date = date.fromisoformat(business_date)
+        except ValueError:
+            return Response({'error': 'Invalid date.'}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            WorkbookPromoDayOverride.objects.filter(
+                organization=organization, business_date=target_date,
+            ).delete()
         return Response(self._payload(organization, target_date))
 
 

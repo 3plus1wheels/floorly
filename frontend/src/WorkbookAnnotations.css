@@ -1,0 +1,75 @@
+.wb-annotations-header,
+.wb-annotations-body {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-width: 0;
+  align-self: stretch;
+}
+
+.wb-annotations-header {
+  height: 100%;
+  align-items: stretch;
+}
+
+.wb-annotation-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--wb-new-grid, #111);
+  background: #fff;
+  color: #111;
+  padding: 3px 2px;
+  text-align: center;
+  text-transform: uppercase;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.35px;
+  line-height: 1.1;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.wb-annotations-body {
+  align-content: start;
+  align-items: start;
+}
+
+.wb-annotation-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  align-content: start;
+}
+
+.wb-annotation-spacer,
+.wb-annotation-cell {
+  box-sizing: border-box;
+  min-width: 0;
+  border-right: 1px solid var(--wb-new-grid, #111);
+  border-bottom: 1px solid var(--wb-new-grid, #111);
+  border-left: 1px solid var(--wb-new-grid, #111);
+  background: #fff;
+}
+
+.wb-annotation-title-spacer {
+  height: var(--wb-new-zone-title-row-height, 22px);
+  border-top: 1px solid var(--wb-new-grid, #111);
+}
+
+.wb-annotation-header-spacer {
+  height: var(--wb-new-zone-header-row-height, 26px);
+}
+
+.wb-annotation-cell {
+  height: var(--wb-new-zone-row-height, 26px);
+}
+
+@media print {
+  .wb-annotation-title {
+    font-size: 5px !important;
+    letter-spacing: 0.15px !important;
+    padding: 1px !important;
+  }
+}

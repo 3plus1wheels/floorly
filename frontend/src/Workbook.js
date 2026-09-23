@@ -3,6 +3,9 @@ import { AlertTriangle, Check, Inbox, LoaderCircle, Printer, Settings2, X } from
 import API_BASE from './config';
 import { useAuth } from './AuthContext';
 import { applyZoneColor, COLOR_OPTIONS, DEFAULT_ZONE_COLORS, normalizeZoneColors, ZONE_OPTIONS, zoneStyle } from './zoneColors';
+import WorkbookAnnotations from './WorkbookAnnotations';
+import WorkbookPromos from './WorkbookPromos';
+import ZoneColorSwatches from './ZoneColorSwatches';
 import './Workbook.css';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -576,6 +579,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     try { return localStorage.getItem('floorly-workbook-view') === 'new' ? 'new' : 'old'; }
     catch { return 'old'; }
   });
+  const [promoDirty, setPromoDirty] = useState(false);
   const [zoneColors, setZoneColors] = useState(() => loadZoneColors(selectedOrganizationId));
   const [editingZoneColors, setEditingZoneColors] = useState(false);
   const [colorZone, setColorZone] = useState(ZONE_OPTIONS[0]);
@@ -614,6 +618,16 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const [hourly, setHourly] = useState(defaultHourly);
 
   const segments = DEFAULT_SEGMENTS;
+
+  useEffect(() => {
+    if (!promoDirty) return undefined;
+    const warnBeforeUnload = event => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
+  }, [promoDirty]);
 
   useEffect(() => {
     const savedColors = loadZoneColors(selectedOrganizationId);
@@ -902,7 +916,17 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const colorOwner = ZONE_OPTIONS.find(zone => zone !== colorZone && zoneColors[zone] === colorValue);
 
   const handlePrint = () => window.print();
+  const canLeavePromos = () => !promoDirty || window.confirm('Discard unsaved promo and notes changes?');
+  const changeWeek = nextWeek => {
+    const changed = toYMD(nextWeek) !== toYMD(weekStart);
+    if (changed && !canLeavePromos()) return;
+    if (changed) setPromoDirty(false);
+    setWeekStart(nextWeek);
+  };
   const selectWorkbookView = view => {
+    const changed = view !== workbookView;
+    if (changed && !canLeavePromos()) return;
+    if (changed) setPromoDirty(false);
     setWorkbookView(view);
     try { localStorage.setItem('floorly-workbook-view', view); } catch { /* Keep the selected view for this session. */ }
   };
@@ -1038,12 +1062,12 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
       {/* ── Week nav ── */}
       <div className="wb-topbar">
         <div className="wb-week-nav">
-          <button onClick={() => setWeekStart(w => addDays(w, -7))}>‹</button>
+          <button onClick={() => changeWeek(addDays(weekStart, -7))}>‹</button>
           <span className="wb-week-label">
             {formatShortDate(weekStart)} – {formatShortDate(addDays(weekStart, 6))}
           </span>
-          <button onClick={() => setWeekStart(w => addDays(w, 7))}>›</button>
-          <button className="wb-today-btn" onClick={() => setWeekStart(getMondayOfWeek(new Date()))}>Today</button>
+          <button onClick={() => changeWeek(addDays(weekStart, 7))}>›</button>
+          <button className="wb-today-btn" onClick={() => changeWeek(getMondayOfWeek(new Date()))}>Today</button>
         </div>
         <div className="wb-topbar-actions">
           <div className="wb-view-switch" role="group" aria-label="Workbook view">
@@ -1187,12 +1211,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
                 {ZONE_OPTIONS.map(zone => <option key={zone} value={zone}>{zone}</option>)}
               </select>
             </label>
-            <label>
-              Colour
-              <select aria-label="Zone colour" value={colorValue} onChange={event => setColorValue(event.target.value)}>
-                {COLOR_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.name}</option>)}
-              </select>
-            </label>
+            <ZoneColorSwatches value={colorValue} onChange={setColorValue} options={COLOR_OPTIONS} />
             <span className="wb-zone-color-preview" style={{ backgroundColor: colorValue }} aria-hidden="true" />
             <button className="wb-zone-color-apply" disabled={zoneColors[colorZone] === colorValue} onClick={() => saveZoneColors(applyZoneColor(zoneColors, colorZone, colorValue))}>Apply</button>
             <button className="wb-zone-color-reset" onClick={() => {
@@ -1211,7 +1230,11 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
           <button
             key={day}
             className={`wb-day-tab${activeDay === day ? ' active' : ''}`}
-            onClick={() => setActiveDay(day)}
+            onClick={() => {
+              if (day !== activeDay && !canLeavePromos()) return;
+              if (day !== activeDay) setPromoDirty(false);
+              setActiveDay(day);
+            }}
           >
             <span className="wb-day-abbr">{day}</span>
             <span className="wb-day-date">{formatShortDate(weekDates[i])}</span>
@@ -1252,20 +1275,15 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
                 comparisonDate={kpiState?.comparisonDate}
                 onCommit={commitGoal}
               />
-              <div className="wb-new-annotations" aria-label="Unstored annotation placeholders">
-                {[
-                  'Learning lab: behaviors and observations',
-                  'First break (taken)',
-                  'Second break (taken, if applicable)',
-                  'Other',
-                ].map(label => (
-                  <div className="wb-new-annotation" key={label} aria-label={`${label}; placeholder only, not saved`}>
-                    <span>{label}</span>
-                    <i aria-hidden="true" />
-                  </div>
-                ))}
-              </div>
+              <WorkbookPromos
+                date={requestedDate}
+                organizationId={selectedOrganizationId}
+                token={token}
+                onDirtyChange={setPromoDirty}
+              />
             </div>
+            <WorkbookAnnotations rows={data?.rows || []} section="header" />
+            <WorkbookAnnotations rows={data?.rows || []} section="body" />
             <div className="wb-new-right-stack">
               <HourlySegments
                 goals={goals}

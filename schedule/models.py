@@ -95,6 +95,33 @@ class WorkbookZoneOverride(models.Model):
         ordering = ['shift_id', 'hour']
 
 
+class WorkbookPromoRows(models.Model):
+    """Organization-wide default list of workbook promo and note lines."""
+    organization = models.OneToOneField(
+        Organization, on_delete=models.CASCADE, related_name='workbook_promo_rows',
+    )
+    rows = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class WorkbookPromoDayOverride(models.Model):
+    """A day-specific replacement for the organization's shared promo rows."""
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name='workbook_promo_day_overrides',
+    )
+    business_date = models.DateField()
+    rows = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization', 'business_date'],
+                name='unique_workbook_promo_override_per_org_date',
+            ),
+        ]
+
+
 class KronosImportConsent(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -17,7 +17,7 @@ test('zone colour panel swaps occupied colours and restores them after reload', 
     const view = render(<Workbook />);
     await screen.findByText('No shifts for Mon 2026-09-21');
     fireEvent.click(screen.getByRole('button', { name: 'Zone colours' }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Zone colour' }), { target: { value: '#2563EB' } });
+    fireEvent.click(screen.getByRole('radio', { name: 'Blue' }));
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     const legend = within(screen.getByLabelText('Zone color legend'));

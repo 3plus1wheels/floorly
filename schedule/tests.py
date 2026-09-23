@@ -9,7 +9,10 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
 from api.models import Organization, OrganizationMembership, UserProfile
-from .models import Employee, KronosImportConsent, Shift, StaffZone, WorkbookZoneOverride
+from .models import (
+    Employee, KronosImportConsent, Shift, StaffZone, WorkbookZoneOverride,
+    WorkbookPromoRows, WorkbookPromoDayOverride,
+)
 from .authentication import ScheduleSyncToken
 from .parsers import _normalize_role
 from .views import _build_interval_assignments
@@ -1374,6 +1377,74 @@ class WorkbookZoneOverrideTests(TestCase):
         self.assertEqual(reset.status_code, 200)
         self.assertEqual(reset.data['overrides'], [])
         self.assertFalse(WorkbookZoneOverride.objects.exists())
+
+
+class WorkbookPromoRowsTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='promo-editor', password='password')
+        self.organization = Organization.objects.create(name='Promo Store')
+        OrganizationMembership.objects.create(user=self.user, organization=self.organization)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.client.credentials(HTTP_X_ORGANIZATION_ID=str(self.organization.id))
+        self.url = reverse('workbook_promo_rows', args=['2026-09-23'])
+
+    def test_reads_empty_list_and_saves_shared_rows_across_dates(self):
+        initial = self.client.get(self.url)
+        self.assertEqual(initial.status_code, 200)
+        self.assertEqual(initial.data['rows'], [])
+        self.assertEqual(initial.data['source'], 'shared')
+
+        saved = self.client.patch(self.url, {'scope': 'shared', 'rows': ['Promo A', 'Note B']}, format='json')
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.data['rows'], ['Promo A', 'Note B'])
+        next_date = self.client.get(reverse('workbook_promo_rows', args=['2026-09-30']))
+        self.assertEqual(next_date.data['rows'], ['Promo A', 'Note B'])
+
+    def test_day_override_wins_and_shared_edits_preserve_all_overrides(self):
+        WorkbookPromoRows.objects.create(organization=self.organization, rows=['Shared old'])
+        WorkbookPromoDayOverride.objects.create(
+            organization=self.organization, business_date=date(2026, 9, 23), rows=['Today only'],
+        )
+        saved = self.client.patch(self.url, {'scope': 'shared', 'rows': ['Shared new']}, format='json')
+        self.assertEqual(saved.data['rows'], ['Today only'])
+        self.assertEqual(saved.data['shared_rows'], ['Shared new'])
+        self.assertTrue(saved.data['has_override'])
+        self.assertEqual(
+            WorkbookPromoDayOverride.objects.get(organization=self.organization).rows,
+            ['Today only'],
+        )
+
+        reset = self.client.delete(self.url)
+        self.assertEqual(reset.status_code, 200)
+        self.assertEqual(reset.data['rows'], ['Shared new'])
+        self.assertFalse(reset.data['has_override'])
+
+    def test_rejects_invalid_payload_without_partial_write(self):
+        too_long = 'x' * 241
+        response = self.client.patch(self.url, {'scope': 'shared', 'rows': ['Valid', too_long]}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(WorkbookPromoRows.objects.exists())
+        self.assertEqual(self.client.patch(self.url, {'scope': 'week', 'rows': []}, format='json').status_code, 400)
+
+    def test_requires_membership_in_selected_organization(self):
+        other = Organization.objects.create(name='Other Promo Store')
+        self.client.credentials(HTTP_X_ORGANIZATION_ID=str(other.id))
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+
+class WorkbookZoneOverrideSecurityTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='zone-security-editor', password='password')
+        self.organization = Organization.objects.create(name='Zone Security Store')
+        OrganizationMembership.objects.create(user=self.user, organization=self.organization)
+        self.employee = Employee.objects.create(organization=self.organization, name='Alex Stylist')
+        self.shift = Shift.objects.create(
+            employee=self.employee, date=date(2026, 9, 7), start_time=time(9), end_time=time(12), role='Stylist')
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.client.credentials(HTTP_X_ORGANIZATION_ID=str(self.organization.id))
+        self.url = reverse('workbook_zone_overrides', args=['2026-09-07'])
 
     def test_invalid_mixed_batch_is_atomic_and_organization_scoped(self):
         other = Organization.objects.create(name='Other Zone Store')

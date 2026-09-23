@@ -253,8 +253,8 @@ describe('Workbook KPI persistence', () => {
     expect(screen.getAllByText('$14,000').length).toBeGreaterThan(0);
     expect(screen.getByText('8am - 9am')).toBeInTheDocument();
     expect(screen.getByText('9am - 10am')).toBeInTheDocument();
-    expect(screen.getByLabelText(/First break \(taken\); placeholder only, not saved/)).toBeInTheDocument();
-    expect(screen.queryByRole('textbox', { name: /Notes/i })).not.toBeInTheDocument();
+    expect(screen.getByText('1st Break Taken')).toBeInTheDocument();
+    expect(screen.getByLabelText('Non-editable schedule annotation cells')).toBeInTheDocument();
     expect(localStorage.getItem('floorly-workbook-view')).toBe('new');
 
     view.unmount();
@@ -265,6 +265,27 @@ describe('Workbook KPI persistence', () => {
     expect(screen.queryByText('ZONE CHART')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Edit day sales target')).toHaveTextContent('$12,918');
     expect(localStorage.getItem('floorly-workbook-view')).toBe('old');
+  });
+
+  test('warns before leaving a day with unsaved promo edits', async () => {
+    const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+    try {
+      render(<Workbook />);
+      fireEvent.click(screen.getByRole('button', { name: 'New' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Add row' }));
+      fireEvent.change(screen.getByRole('textbox', { name: 'Promo or note 1' }), { target: { value: 'Weekend promo' } });
+      await screen.findByText('Unsaved changes');
+
+      fireEvent.click(screen.getByRole('button', { name: /Tue/ }));
+      expect(confirm).toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: /Mon/ })).toHaveClass('active');
+
+      confirm.mockReturnValue(true);
+      fireEvent.click(screen.getByRole('button', { name: /Tue/ }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Tue/ })).toHaveClass('active'));
+    } finally {
+      confirm.mockRestore();
+    }
   });
 
   test('saves a zone from its cell dropdown and restores automatic zoning', async () => {
