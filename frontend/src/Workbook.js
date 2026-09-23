@@ -2,10 +2,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AlertTriangle, Check, Inbox, LoaderCircle, Printer, Settings2, X } from 'lucide-react';
 import API_BASE from './config';
 import { useAuth } from './AuthContext';
+import { applyZoneColor, COLOR_OPTIONS, DEFAULT_ZONE_COLORS, normalizeZoneColors, ZONE_OPTIONS, zoneStyle } from './zoneColors';
 import './Workbook.css';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const ZONE_OPTIONS = ['WOMENS', 'MENS', 'FITS', 'CASH', 'GREET', 'FLEX', 'OFFICE', 'TASK', 'STYLIST', 'CEL', 'BOH'];
 
 // ─── Hourly segments configuration ───────────────────────────────────────────
 // Each segment: label shown in header, start hour (24h), end hour (24h)
@@ -185,28 +185,19 @@ function validShiftTimes(start, end) {
     && endMinutes > startMinutes;
 }
 
-const ZONE_STYLE = {
-  WOMENS:  { bg: '#e91e63', text: '#fff' },
-  MENS:    { bg: '#1976d2', text: '#fff' },
-  FITS:    { bg: '#7b1fa2', text: '#fff' },
-  CASH:    { bg: '#00897b', text: '#fff' },
-  GREET:   { bg: '#f57c00', text: '#fff' },
-  FLEX:    { bg: '#b2dfdb', text: '#1b5e20' },
-  OFFICE:  { bg: '#455a64', text: '#fff' },
-  TASK:    { bg: '#6d4c41', text: '#fff' },
-  STYLIST: { bg: '#4caf50', text: '#fff' },
-  CEL:     { bg: '#0288d1', text: '#fff' },
-  BOH:     { bg: '#ff9800', text: '#fff' },
-};
-
-function zoneStyle(zone) {
-  return ZONE_STYLE[zone] || { bg: '#555', text: '#fff' };
+function loadZoneColors(organizationId) {
+  if (!organizationId) return { ...DEFAULT_ZONE_COLORS };
+  try {
+    return normalizeZoneColors(JSON.parse(localStorage.getItem(`floorly-zone-colors:${organizationId}`)));
+  } catch {
+    return { ...DEFAULT_ZONE_COLORS };
+  }
 }
 
-function ZoneCell({ zone, effective, overridden, selectionLabel, disabled, onChange }) {
+function ZoneCell({ zone, effective, overridden, selectionLabel, disabled, onChange, zoneColors }) {
   if (!zone) return <td className="wb-hour-cell" />;
 
-  const s = zoneStyle(effective);
+  const s = zoneStyle(effective, zoneColors);
 
   return (
     <td
@@ -423,7 +414,7 @@ function TodaysGoals({ goals, sources, date, comparisonDate, onCommit }) {
 }
 
 // ─── Hourly Segments panel ────────────────────────────────────────────────────
-function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kpiRows, printFitMode }) {
+function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kpiRows, printFitMode, newView = false }) {
   const daySales   = parseCurrency(goals.daySalesTarget) || 0;
   const dayStretch = parseCurrency(goals.stretchTarget)  || 0;
 
@@ -515,16 +506,25 @@ function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kp
     ? allRows.filter(r => !r.optional)
     : allRows;
   const nonSpacerCount = visibleRows.filter(r => !r.spacer).length;
+  const leadingHours = newView ? [8, 9] : [];
+  const totalColumns = segments.length + leadingHours.length + 2;
 
   return (
     <div className="wb-hs-wrap">
       <table className="wb-hs-table">
+        <colgroup>
+          <col className="wb-hs-label-col" />
+          {leadingHours.map(hour => <col key={`leading-${hour}`} className="wb-hs-leading-col" />)}
+          {segments.map((seg, i) => <col key={i} />)}
+          <col className="wb-hs-notes-col" />
+        </colgroup>
         <thead>
           <tr>
-            <th className="wb-hs-section-title" colSpan={segments.length + 2}>HOURLY SEGMENTS</th>
+            <th className="wb-hs-section-title" colSpan={totalColumns}>HOURLY SEGMENTS</th>
           </tr>
           <tr>
             <th className="wb-hs-row-label">HOURS OF OPERATIONS</th>
+            {leadingHours.map(hour => <th key={hour} className="wb-hs-col-header">{hour}am - {hour + 1}am</th>)}
             {segments.map((seg, i) => (
               <th key={i} className="wb-hs-col-header">{seg.label}</th>
             ))}
@@ -533,10 +533,11 @@ function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kp
         </thead>
         <tbody>
           {visibleRows.map((row, ri) => {
-            if (row.spacer) return <tr key={ri} className="wb-hs-spacer"><td colSpan={segments.length + 2} /></tr>;
+            if (row.spacer) return <tr key={ri} className="wb-hs-spacer"><td colSpan={newView ? totalColumns - 1 : totalColumns} /></tr>;
             return (
               <tr key={ri} className={`${row.highlight ? 'wb-hs-highlight' : ''}${row.optional ? ' wb-hs-row-optional' : ''}`}>
                 <td className="wb-hs-row-label">{row.label}{row.extra && <span style={{ marginLeft: 8 }}>{row.extra}</span>}</td>
+                {leadingHours.map(hour => <td key={`leading-${hour}`} className="wb-hs-cell wb-hs-leading-cell" aria-hidden="true" />)}
                 {row.cells.map((cell, ci) => {
                   if (cell.editable && cell.onChange) {
                     return (
@@ -558,7 +559,7 @@ function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kp
                     <td key={ci} className={`wb-hs-cell${cell.derived ? ' wb-hs-derived' : ''}`}>{display}</td>
                   );
                 })}
-                {ri === 0 ? <td className="wb-hs-notes-cell" rowSpan={nonSpacerCount} /> : null}
+                {ri === 0 ? <td className="wb-hs-notes-cell" rowSpan={newView ? visibleRows.length : nonSpacerCount} aria-label="Notes and observations placeholder; not saved" /> : null}
               </tr>
             );
           })}
@@ -571,6 +572,14 @@ function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kp
 // ─── Main Workbook component ──────────────────────────────────────────────────
 export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const { selectedOrganizationId } = useAuth();
+  const [workbookView, setWorkbookView] = useState(() => {
+    try { return localStorage.getItem('floorly-workbook-view') === 'new' ? 'new' : 'old'; }
+    catch { return 'old'; }
+  });
+  const [zoneColors, setZoneColors] = useState(() => loadZoneColors(selectedOrganizationId));
+  const [editingZoneColors, setEditingZoneColors] = useState(false);
+  const [colorZone, setColorZone] = useState(ZONE_OPTIONS[0]);
+  const [colorValue, setColorValue] = useState(() => loadZoneColors(selectedOrganizationId)[ZONE_OPTIONS[0]]);
   const [weekStart, setWeekStart] = useState(() => getMondayOfWeek(new Date()));
   const [activeDay, setActiveDay] = useState('Mon');
   const [data, setData]           = useState(null);
@@ -605,6 +614,19 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const [hourly, setHourly] = useState(defaultHourly);
 
   const segments = DEFAULT_SEGMENTS;
+
+  useEffect(() => {
+    const savedColors = loadZoneColors(selectedOrganizationId);
+    setZoneColors(savedColors);
+    setColorZone(ZONE_OPTIONS[0]);
+    setColorValue(savedColors[ZONE_OPTIONS[0]]);
+  }, [selectedOrganizationId]);
+
+  const saveZoneColors = colors => {
+    setZoneColors(colors);
+    if (!selectedOrganizationId) return;
+    try { localStorage.setItem(`floorly-zone-colors:${selectedOrganizationId}`, JSON.stringify(colors)); } catch { /* Keep the current page updated if storage is unavailable. */ }
+  };
 
   const token = localStorage.getItem('access_token');
   const requestedDate = toYMD(addDays(weekStart, DAYS.indexOf(activeDay)));
@@ -877,8 +899,139 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const weekDates = DAYS.map((_, i) => addDays(weekStart, i));
   const hasOverrides = Object.keys(overrides).length > 0;
   const optionalKpiCount = kpiRows.filter(r => r.optional || String(r.id).startsWith('custom_')).length;
+  const colorOwner = ZONE_OPTIONS.find(zone => zone !== colorZone && zoneColors[zone] === colorValue);
 
   const handlePrint = () => window.print();
+  const selectWorkbookView = view => {
+    setWorkbookView(view);
+    try { localStorage.setItem('floorly-workbook-view', view); } catch { /* Keep the selected view for this session. */ }
+  };
+
+  const zoneSection = (
+    <div className={`wb-zone-section${workbookView === 'new' ? ' wb-zone-new' : ''}`}>
+      {loading && (
+        <div className="state-card inline">
+          <LoaderCircle className="state-icon" />
+          <div>
+            <p className="state-title">Loading workbook</p>
+            <p className="state-copy">Building the Floorly map for {activeDay}.</p>
+          </div>
+        </div>
+      )}
+      {error && (
+        <div className="state-card inline error">
+          <AlertTriangle className="state-icon" />
+          <div>
+            <p className="state-title">Workbook unavailable</p>
+            <p className="state-copy">{error}</p>
+          </div>
+        </div>
+      )}
+
+      {data && !loading && (
+        <div className="wb-table-wrap">
+          <table className={`wb-table${workbookView === 'new' ? ' wb-zone-new-table' : ''}`} role="grid" aria-label="Floorly zone map">
+            <thead>
+              <tr>
+                <th className={`wb-zone-header${workbookView === 'new' ? ' wb-zone-section-title' : ''}`} colSpan={2 + data.col_headers.length + (workbookView === 'new' ? 1 : 0)}>
+                  {workbookView === 'new' ? 'ZONE CHART' : <>FLOORLY MAP — {data.day.toUpperCase()}&nbsp;&nbsp;<span className="wb-zone-date">{data.date}</span></>}
+                </th>
+              </tr>
+              <tr>
+                <th className="wb-col-name">Name</th>
+                <th className="wb-col-shift">Shift</th>
+                {data.col_headers.map(h => (
+                  <th key={h} className="wb-col-hour">{h}</th>
+                ))}
+                {workbookView === 'new' && <th className="wb-zone-notes-header">Notes</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.length === 0 ? (
+                <tr>
+                  <td colSpan={2 + data.col_headers.length + (workbookView === 'new' ? 1 : 0)} className="wb-no-data">
+                    <div className="state-card inline">
+                      <Inbox className="state-icon" />
+                      <div>
+                        <p className="state-title">No shifts for {data.day} {data.date}</p>
+                        <p className="state-copy">Import the weekly schedule to generate this day’s Floorly map.</p>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                data.rows.map(row => (
+                  <tr key={row.shift_id}>
+                    <NameCell
+                      row={row}
+                      editing={editingNameShiftId === row.shift_id}
+                      draft={editingNameShiftId === row.shift_id ? nameDraft : row.name}
+                      saving={editingNameShiftId === row.shift_id && nameSaveStatus === 'saving'}
+                      editDisabled={shiftSaveStatus === 'saving' || nameSaveStatus === 'saving'}
+                      onEdit={() => startNameEdit(row)}
+                      onChange={setNameDraft}
+                      onSave={() => saveNameEdit(row.shift_id)}
+                      onCancel={cancelNameEdit}
+                    />
+                    <ShiftCell
+                      row={row}
+                      editing={editingShiftId === row.shift_id}
+                      draft={editingShiftId === row.shift_id ? shiftDraft : { start_time: row.start_time, end_time: row.end_time }}
+                      saving={editingShiftId === row.shift_id && shiftSaveStatus === 'saving'}
+                      editDisabled={shiftSaveStatus === 'saving' || nameSaveStatus === 'saving'}
+                      onEdit={() => startShiftEdit(row)}
+                      onChange={setShiftDraft}
+                      onSave={() => saveShiftEdit(row.shift_id)}
+                      onCancel={cancelShiftEdit}
+                    />
+                    {data.hours.map(h => {
+                      const zone = row.zones[String(h)];
+                      const col = data.hours.indexOf(h);
+                      const cellKey = `${row.shift_id}:${h}`;
+                      return (
+                        <ZoneCell
+                          key={h}
+                          zone={zone}
+                          effective={overrides[cellKey] || zone}
+                          overridden={Boolean(overrides[cellKey])}
+                          selectionLabel={`${row.name}, ${data.col_headers[col]}`}
+                          disabled={zoneSaveStatus === 'saving'}
+                          onChange={value => saveZoneOperation(
+                            value ? 'set' : 'clear',
+                            value || null,
+                            [{ shift_id: row.shift_id, hour: h }],
+                          )}
+                          zoneColors={zoneColors}
+                        />
+                      );
+                    })}
+                    {workbookView === 'new' && <td className="wb-zone-notes-cell" aria-label={`Notes placeholder for ${row.name}; not saved`} />}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!data && !loading && !error && (
+        <div className="state-card inline">
+          <Inbox className="state-icon" />
+          <div>
+            <p className="state-title">No workbook data yet</p>
+            <p className="state-copy">Import a schedule to generate your first Floorly map.</p>
+          </div>
+        </div>
+      )}
+
+      <div className="wb-legend" aria-label="Zone color legend">
+        {ZONE_OPTIONS.map(zone => {
+          const style = zoneStyle(zone, zoneColors);
+          return <span key={zone} className="wb-legend-item" style={{ backgroundColor: style.bg, color: style.text }}>{zone}</span>;
+        })}
+      </div>
+    </div>
+  );
 
   return (
     <div className={`wb-root wb-print-${printFitMode}`}>
@@ -893,6 +1046,10 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
           <button className="wb-today-btn" onClick={() => setWeekStart(getMondayOfWeek(new Date()))}>Today</button>
         </div>
         <div className="wb-topbar-actions">
+          <div className="wb-view-switch" role="group" aria-label="Workbook view">
+            <button type="button" aria-pressed={workbookView === 'old'} className={workbookView === 'old' ? 'active' : ''} onClick={() => selectWorkbookView('old')}>Old</button>
+            <button type="button" aria-pressed={workbookView === 'new'} className={workbookView === 'new' ? 'active' : ''} onClick={() => selectWorkbookView('new')}>New</button>
+          </div>
           <button
             className="wb-reset-btn"
             onClick={resetAllKpis}
@@ -913,6 +1070,14 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
           >
             <Settings2 style={{ width: 14, height: 14, marginRight: 6, verticalAlign: 'text-bottom' }} />
             KPIs
+          </button>
+          <button
+            className={`wb-customize-btn wb-colors-btn${editingZoneColors ? ' active' : ''}`}
+            onClick={() => setEditingZoneColors(open => !open)}
+            aria-expanded={editingZoneColors}
+            title="Customize zone colours"
+          >
+            Zone colours
           </button>
           <select
             className="wb-print-mode-select"
@@ -1008,6 +1173,38 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
         </div>
       )}
 
+      {editingZoneColors && (
+        <div className="wb-zone-colors-panel">
+          <div className="wb-zone-colors-title">Zone colours</div>
+          <div className="wb-zone-colors-controls">
+            <label>
+              Zone
+              <select aria-label="Zone to recolour" value={colorZone} onChange={event => {
+                const zone = event.target.value;
+                setColorZone(zone);
+                setColorValue(zoneColors[zone]);
+              }}>
+                {ZONE_OPTIONS.map(zone => <option key={zone} value={zone}>{zone}</option>)}
+              </select>
+            </label>
+            <label>
+              Colour
+              <select aria-label="Zone colour" value={colorValue} onChange={event => setColorValue(event.target.value)}>
+                {COLOR_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.name}</option>)}
+              </select>
+            </label>
+            <span className="wb-zone-color-preview" style={{ backgroundColor: colorValue }} aria-hidden="true" />
+            <button className="wb-zone-color-apply" disabled={zoneColors[colorZone] === colorValue} onClick={() => saveZoneColors(applyZoneColor(zoneColors, colorZone, colorValue))}>Apply</button>
+            <button className="wb-zone-color-reset" onClick={() => {
+              const defaults = { ...DEFAULT_ZONE_COLORS };
+              saveZoneColors(defaults);
+              setColorValue(defaults[colorZone]);
+            }}>Reset colours</button>
+          </div>
+          {colorOwner && <div className="wb-zone-colors-hint">{colorOwner} will take {colorZone}'s current colour, keeping every zone distinct.</div>}
+        </div>
+      )}
+
       {/* ── Day tabs ── */}
       <div className="wb-day-tabs">
         {DAYS.map((day, i) => (
@@ -1022,158 +1219,69 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
         ))}
       </div>
 
-      {/* ── Hourly Segments (top panel) ── */}
-      <HourlySegments
-        goals={goals}
-        hourly={hourly}
-        setHourly={setHourly}
-        onHourlyCommit={commitHourly}
-        segments={segments}
-        kpiRows={kpiRows}
-        printFitMode={printFitMode}
-      />
-
-      {/* ── Main body: Goals + Zone Chart side by side ── */}
-      <div className="wb-body-layout">
-        {/* Left: Today's Goals */}
-        <TodaysGoals
-          goals={goals}
-          sources={kpiState?.sources}
-          date={kpiState?.date || data?.date}
-          comparisonDate={kpiState?.comparisonDate}
-          onCommit={commitGoal}
-        />
-
-        {/* Right: Zone chart */}
-        <div className="wb-zone-section">
-          {/* ── Zone chart ── */}
-          {loading && (
-            <div className="state-card inline">
-              <LoaderCircle className="state-icon" />
-              <div>
-                <p className="state-title">Loading workbook</p>
-                <p className="state-copy">Building the Floorly map for {activeDay}.</p>
-              </div>
-            </div>
-          )}
-          {error && (
-            <div className="state-card inline error">
-              <AlertTriangle className="state-icon" />
-              <div>
-                <p className="state-title">Workbook unavailable</p>
-                <p className="state-copy">{error}</p>
-              </div>
-            </div>
-          )}
-
-          {data && !loading && (
-            <div className="wb-table-wrap">
-              <table className="wb-table" role="grid" aria-label="Floorly zone map">
-                <thead>
-                  <tr>
-                    <th className="wb-zone-header" colSpan={2 + data.col_headers.length}>
-                      FLOORLY MAP — {data.day.toUpperCase()}&nbsp;&nbsp;
-                      <span className="wb-zone-date">{data.date}</span>
-                    </th>
-                  </tr>
-                  <tr>
-                    <th className="wb-col-name">Name</th>
-                    <th className="wb-col-shift">Shift</th>
-                    {data.col_headers.map(h => (
-                      <th key={h} className="wb-col-hour">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.rows.length === 0 ? (
-                    <tr>
-                      <td colSpan={2 + data.col_headers.length} className="wb-no-data">
-                        <div className="state-card inline">
-                          <Inbox className="state-icon" />
-                          <div>
-                            <p className="state-title">No shifts for {data.day} {data.date}</p>
-                            <p className="state-copy">Import the weekly schedule to generate this day’s Floorly map.</p>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    data.rows.map(row => (
-                      <tr key={row.shift_id}>
-                        <NameCell
-                          row={row}
-                          editing={editingNameShiftId === row.shift_id}
-                          draft={editingNameShiftId === row.shift_id ? nameDraft : row.name}
-                          saving={editingNameShiftId === row.shift_id && nameSaveStatus === 'saving'}
-                          editDisabled={shiftSaveStatus === 'saving' || nameSaveStatus === 'saving'}
-                          onEdit={() => startNameEdit(row)}
-                          onChange={setNameDraft}
-                          onSave={() => saveNameEdit(row.shift_id)}
-                          onCancel={cancelNameEdit}
-                        />
-                        <ShiftCell
-                          row={row}
-                          editing={editingShiftId === row.shift_id}
-                          draft={editingShiftId === row.shift_id ? shiftDraft : { start_time: row.start_time, end_time: row.end_time }}
-                          saving={editingShiftId === row.shift_id && shiftSaveStatus === 'saving'}
-                          editDisabled={shiftSaveStatus === 'saving' || nameSaveStatus === 'saving'}
-                          onEdit={() => startShiftEdit(row)}
-                          onChange={setShiftDraft}
-                          onSave={() => saveShiftEdit(row.shift_id)}
-                          onCancel={cancelShiftEdit}
-                        />
-                        {data.hours.map(h => {
-                          const zone = row.zones[String(h)];
-                          const col = data.hours.indexOf(h);
-                          const cellKey = `${row.shift_id}:${h}`;
-                          return (
-                            <ZoneCell
-                              key={h}
-                              zone={zone}
-                              effective={overrides[cellKey] || zone}
-                              overridden={Boolean(overrides[cellKey])}
-                              selectionLabel={`${row.name}, ${data.col_headers[col]}`}
-                              disabled={zoneSaveStatus === 'saving'}
-                              onChange={value => saveZoneOperation(
-                                value ? 'set' : 'clear',
-                                value || null,
-                                [{ shift_id: row.shift_id, hour: h }],
-                              )}
-                            />
-                          );
-                        })}
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {!data && !loading && !error && (
-            <div className="state-card inline">
-              <Inbox className="state-icon" />
-              <div>
-                <p className="state-title">No workbook data yet</p>
-                <p className="state-copy">Import a schedule to generate your first Floorly map.</p>
-              </div>
-            </div>
-          )}
-
-          {/* ── Legend ── */}
-          <div className="wb-legend" aria-label="Zone color legend">
-            {Object.entries(ZONE_STYLE).map(([zone, s]) => (
-              <span
-                key={zone}
-                className="wb-legend-item"
-                style={{ backgroundColor: s.bg, color: s.text }}
-              >
-                {zone}
-              </span>
-            ))}
+      {workbookView === 'old' ? (
+        <div className="wb-view-old">
+          <HourlySegments
+            goals={goals}
+            hourly={hourly}
+            setHourly={setHourly}
+            onHourlyCommit={commitHourly}
+            segments={segments}
+            kpiRows={kpiRows}
+            printFitMode={printFitMode}
+          />
+          <div className="wb-body-layout">
+            <TodaysGoals
+              goals={goals}
+              sources={kpiState?.sources}
+              date={kpiState?.date || data?.date}
+              comparisonDate={kpiState?.comparisonDate}
+              onCommit={commitGoal}
+            />
+            {zoneSection}
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="wb-view-new">
+          <div className="wb-new-layout">
+            <div className="wb-new-left">
+              <TodaysGoals
+                goals={goals}
+                sources={kpiState?.sources}
+                date={kpiState?.date || data?.date}
+                comparisonDate={kpiState?.comparisonDate}
+                onCommit={commitGoal}
+              />
+              <div className="wb-new-annotations" aria-label="Unstored annotation placeholders">
+                {[
+                  'Learning lab: behaviors and observations',
+                  'First break (taken)',
+                  'Second break (taken, if applicable)',
+                  'Other',
+                ].map(label => (
+                  <div className="wb-new-annotation" key={label} aria-label={`${label}; placeholder only, not saved`}>
+                    <span>{label}</span>
+                    <i aria-hidden="true" />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="wb-new-right-stack">
+              <HourlySegments
+                goals={goals}
+                hourly={hourly}
+                setHourly={setHourly}
+                onHourlyCommit={commitHourly}
+                segments={segments}
+                kpiRows={kpiRows}
+                printFitMode={printFitMode}
+                newView
+              />
+              {zoneSection}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

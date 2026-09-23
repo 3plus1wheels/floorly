@@ -5,6 +5,7 @@ import Workbook from './Workbook';
 let mockSelectedOrg = '41';
 let mockFailSave = false;
 let mockKpiState;
+const RealDate = Date;
 
 jest.mock('./AuthContext', () => ({
   useAuth: () => ({ selectedOrganizationId: mockSelectedOrg }),
@@ -58,6 +59,10 @@ describe('Workbook KPI persistence', () => {
   let fetchMock;
 
   beforeEach(() => {
+    global.Date = class extends RealDate {
+      constructor(...args) { super(...(args.length ? args : ['2026-09-14T12:00:00'])); }
+      static now() { return new RealDate('2026-09-14T12:00:00').getTime(); }
+    };
     mockSelectedOrg = '41';
     mockFailSave = false;
     mockKpiState = makeKpi('2026-09-14');
@@ -113,7 +118,10 @@ describe('Workbook KPI persistence', () => {
     });
   });
 
-  afterEach(() => fetchMock.mockRestore());
+  afterEach(() => {
+    fetchMock.mockRestore();
+    global.Date = RealDate;
+  });
 
   test('loads imported goals, comparison date, and month figures for the selected organization', async () => {
     render(<Workbook />);
@@ -225,6 +233,40 @@ describe('Workbook KPI persistence', () => {
     expect(screen.getByRole('option', { name: 'Print Fit: Fit More' })).toBeInTheDocument();
   });
 
+  test('switches between Old and New while keeping shared KPI edits and remembering the choice', async () => {
+    const view = render(<Workbook />);
+    await screen.findByText('TODAY\'S GOALS');
+    expect(screen.getByRole('button', { name: 'Old' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('HOURLY SEGMENTS')).toBeInTheDocument();
+    expect(screen.queryByText('ZONE CHART')).not.toBeInTheDocument();
+
+    const target = screen.getByLabelText('Edit day sales target');
+    fireEvent.click(target);
+    const input = screen.getByRole('textbox', { name: 'Edit day sales target' });
+    fireEvent.change(input, { target: { value: '14000' } });
+    fireEvent.blur(input);
+    await screen.findAllByText('$14,000');
+
+    fireEvent.click(screen.getByRole('button', { name: 'New' }));
+    expect(screen.getByRole('button', { name: 'New' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('ZONE CHART')).toBeInTheDocument();
+    expect(screen.getAllByText('$14,000').length).toBeGreaterThan(0);
+    expect(screen.getByText('8am - 9am')).toBeInTheDocument();
+    expect(screen.getByText('9am - 10am')).toBeInTheDocument();
+    expect(screen.getByLabelText(/First break \(taken\); placeholder only, not saved/)).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /Notes/i })).not.toBeInTheDocument();
+    expect(localStorage.getItem('floorly-workbook-view')).toBe('new');
+
+    view.unmount();
+    render(<Workbook />);
+    await screen.findByText('ZONE CHART');
+    expect(screen.getByRole('button', { name: 'New' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Old' }));
+    expect(screen.queryByText('ZONE CHART')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Edit day sales target')).toHaveTextContent('$12,918');
+    expect(localStorage.getItem('floorly-workbook-view')).toBe('old');
+  });
+
   test('saves a zone from its cell dropdown and restores automatic zoning', async () => {
     let savedOverrides = [];
     const zoneRequests = [];
@@ -268,8 +310,14 @@ describe('Workbook KPI persistence', () => {
     });
     expect(screen.getAllByRole('gridcell', { name: 'CASH' })).toHaveLength(1);
 
-    await waitFor(() => expect(alexNine).not.toBeDisabled());
-    fireEvent.change(alexNine, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'New' }));
+    expect(screen.getByText('ZONE CHART')).toBeInTheDocument();
+    expect(screen.getAllByRole('gridcell', { name: 'CASH' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Old' }));
+
+    const alexNineAgain = screen.getByRole('combobox', { name: 'Zone for ALEX, 9am-10am' });
+    await waitFor(() => expect(alexNineAgain).not.toBeDisabled());
+    fireEvent.change(alexNineAgain, { target: { value: '' } });
     await waitFor(() => expect(zoneRequests).toHaveLength(2));
     expect(zoneRequests[1].clear.cells).toEqual([{ shift_id: 101, hour: 9 }]);
     await waitFor(() => expect(screen.queryAllByRole('gridcell', { name: 'CASH' })).toHaveLength(0));
