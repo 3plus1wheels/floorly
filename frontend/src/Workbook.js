@@ -609,6 +609,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const loadRequestRef = useRef(0);
   const saveRequestRef = useRef(0);
   const zoneSaveRequestRef = useRef(0);
+  const zoneTableRef = useRef(null);
 
   // KPI row configuration — shared across all days
   const [kpiRows, setKpiRows] = useState(DEFAULT_KPI_ROWS);
@@ -956,7 +957,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
 
       {data && !loading && (
         <div className="wb-table-wrap">
-          <table className={`wb-table${workbookView === 'new' ? ' wb-zone-new-table' : ''}`} role="grid" aria-label="Floorly zone map">
+          <table ref={zoneTableRef} className={`wb-table${workbookView === 'new' ? ' wb-zone-new-table' : ''}`} role="grid" aria-label="Floorly zone map">
             <thead>
               <tr>
                 <th className={`wb-zone-header${workbookView === 'new' ? ' wb-zone-section-title' : ''}`} colSpan={2 + data.col_headers.length + (workbookView === 'new' ? 1 : 0)}>
@@ -1291,7 +1292,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
               />
             </div>
             <WorkbookAnnotations rows={data?.rows || []} section="header" />
-            <WorkbookAnnotations rows={data?.rows || []} section="body" />
+            <WorkbookAnnotations rows={data?.rows || []} section="body" tableRef={zoneTableRef} />
             <div className="wb-new-right-stack">
               <HourlySegments
                 goals={goals}

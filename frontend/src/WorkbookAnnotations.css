@@ -46,6 +46,7 @@
 .wb-annotation-spacer,
 .wb-annotation-cell {
   box-sizing: border-box;
+  flex: 0 0 auto;
   min-width: 0;
   border-right: 1px solid var(--wb-new-grid, #111);
   border-bottom: 1px solid var(--wb-new-grid, #111);
@@ -67,6 +68,9 @@
 }
 
 @media print {
+  .wb-annotation-title-spacer { height: var(--wb-new-zone-title-row-height, 4mm) !important; }
+  .wb-annotation-header-spacer { height: var(--wb-new-zone-header-row-height, 4mm) !important; }
+  .wb-annotation-cell { height: var(--wb-new-zone-row-height, 5mm) !important; }
   .wb-annotation-title {
     font-size: 5px !important;
     letter-spacing: 0.15px !important;
