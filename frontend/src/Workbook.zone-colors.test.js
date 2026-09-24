@@ -21,14 +21,14 @@ test('zone colour panel swaps occupied colours and restores them after reload', 
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     const legend = within(screen.getByLabelText('Zone color legend'));
-    expect(legend.getByText('WOMENS')).toHaveStyle({ backgroundColor: '#2563EB' });
-    expect(legend.getByText('MENS')).toHaveStyle({ backgroundColor: '#D9468C' });
-    await waitFor(() => expect(JSON.parse(localStorage.getItem('floorly-zone-colors:41')).WOMENS).toBe('#2563EB'));
+    expect(legend.getByText('WOMENS')).toHaveStyle({ backgroundColor: '#BDD9F5' });
+    expect(legend.getByText('MENS')).toHaveStyle({ backgroundColor: '#F3B6D2' });
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('floorly-zone-colors:41')).WOMENS).toBe('#BDD9F5'));
 
     view.unmount();
     render(<Workbook />);
     await screen.findByText('No shifts for Mon 2026-09-21');
-    expect(within(screen.getByLabelText('Zone color legend')).getByText('WOMENS')).toHaveStyle({ backgroundColor: '#2563EB' });
+    expect(within(screen.getByLabelText('Zone color legend')).getByText('WOMENS')).toHaveStyle({ backgroundColor: '#BDD9F5' });
   } finally {
     fetchMock.mockRestore();
   }

@@ -20,7 +20,16 @@ test('invalid saved colours fall back to defaults', () => {
   expect(normalizeZoneColors({ ...DEFAULT_ZONE_COLORS, MENS: DEFAULT_ZONE_COLORS.WOMENS })).toEqual(DEFAULT_ZONE_COLORS);
 });
 
+test('saved bold colours migrate to the matching pastel palette without losing swaps', () => {
+  const saved = { ...DEFAULT_ZONE_COLORS, WOMENS: '#2563EB', MENS: '#D9468C' };
+  const normalized = normalizeZoneColors(saved);
+  expect(normalized.WOMENS).toBe(DEFAULT_ZONE_COLORS.MENS);
+  expect(normalized.MENS).toBe(DEFAULT_ZONE_COLORS.WOMENS);
+  expect(new Set(Object.values(normalized)).size).toBe(ZONE_OPTIONS.length);
+});
+
 test('text colour remains readable for light and dark zones', () => {
   expect(zoneStyle('STYLIST', DEFAULT_ZONE_COLORS).text).toBe('#111827');
-  expect(zoneStyle('MENS', DEFAULT_ZONE_COLORS).text).toBe('#fff');
+  expect(zoneStyle('MENS', DEFAULT_ZONE_COLORS).text).toBe('#111827');
+  expect(zoneStyle('MENS', { MENS: '#1E3A8A' }).text).toBe('#fff');
 });

@@ -825,10 +825,10 @@
 
 /* ── Zone colour editor ── */
 .wb-zone-colors-panel {
-  background: #f7f3eb;
+  background: #fbfaf6;
   border: 1px solid var(--color-border);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 16px 18px;
   margin-bottom: 8px;
 }
 
@@ -838,44 +838,69 @@
   font-weight: 700;
   letter-spacing: 1px;
   text-transform: uppercase;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
 }
 
 .wb-zone-colors-controls {
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 16px;
 }
 
-.wb-zone-colors-controls label {
+.wb-zone-colors-zone,
+.wb-zone-colors-palette {
   display: grid;
-  gap: 3px;
+  gap: 8px;
+  min-width: 0;
   color: var(--color-muted);
   font-size: 11px;
   font-weight: 700;
 }
 
-.wb-zone-colors-controls select,
-.wb-zone-colors-controls button {
-  height: 32px;
+.wb-zone-colors-label { line-height: 1; }
+
+.wb-zone-colors-zone select {
+  box-sizing: border-box;
+  width: 100%;
+  height: 38px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
   background: #fff;
   color: var(--color-text);
   font: inherit;
-  font-size: 12px;
-  padding: 4px 10px;
+  font-size: 13px;
+  padding: 6px 10px;
 }
 
-.wb-zone-colors-controls select { min-width: 120px; }
-.wb-zone-colors-controls button { cursor: pointer; }
-.wb-zone-colors-controls button:disabled { cursor: default; opacity: 0.5; }
-.wb-zone-colors-controls .wb-zone-color-apply { background: #245f4c; border-color: #245f4c; color: #fff; }
+.wb-zone-colors-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.App .wb-zone-colors-actions button {
+  box-sizing: border-box;
+  height: 38px;
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  white-space: nowrap;
+  transform: none;
+}
+.App .wb-zone-colors-actions button:disabled { cursor: default; opacity: 0.55; }
+.App .wb-zone-color-apply { background: #3b796b; border-color: #3b796b; color: #fff; }
+.App .wb-zone-color-apply:hover:not(:disabled) { background: #2f675a; transform: none; }
+.App .wb-zone-color-reset { background: #fff; border-color: var(--color-border); color: var(--color-text); }
+.App .wb-zone-color-reset:hover { background: #f1f5f4; transform: none; }
 
 .wb-zone-color-preview {
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
   border: 1px solid rgba(13, 13, 18, 0.18);
   border-radius: 6px;
   box-sizing: border-box;
@@ -885,6 +910,16 @@
   color: var(--color-muted);
   font-size: 11px;
   margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .wb-zone-colors-controls { grid-template-columns: minmax(150px, 190px) minmax(0, 1fr); }
+  .wb-zone-colors-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}
+
+@media (max-width: 550px) {
+  .wb-zone-colors-controls { grid-template-columns: minmax(0, 1fr); }
+  .wb-zone-colors-actions { grid-column: 1; flex-wrap: wrap; }
 }
 
 /* ── Import button ── */
@@ -1615,17 +1650,19 @@
   width: 64%;
   background: var(--wb-new-blue);
   color: #111;
-  padding: 4px 5px;
-  font-size: 10px;
+  padding: 5px;
+  font-size: 11px;
   line-height: 1.15;
 }
 
 .wb-view-new .wb-goals-value {
   width: 36%;
-  padding: 4px 5px;
-  font-size: 12px;
+  padding: 5px;
+  font-size: 13px;
   border-left: 1px solid var(--wb-new-grid);
 }
+
+.wb-view-new .wb-goals-section-header { font-size: 11px; }
 
 .wb-view-new .wb-goals-highlight .wb-goals-label,
 .wb-view-new .wb-goals-highlight .wb-goals-value {
@@ -1767,8 +1804,8 @@
   .wb-view-new .wb-goals-value,
   .wb-view-new .wb-goals-section-header { padding: 1.2px !important; }
   .wb-view-new .wb-goals-table { font-size: 5.4px !important; }
-  .wb-view-new .wb-goals-label { font-size: 4.8px !important; }
-  .wb-view-new .wb-goals-value { font-size: 5.2px !important; }
+  .wb-view-new .wb-goals-label { font-size: 5.3px !important; }
+  .wb-view-new .wb-goals-value { font-size: 5.8px !important; }
   .wb-view-new .wb-hs-row-label { width: 15% !important; font-size: 5.6px !important; }
   .wb-view-new .wb-col-name { width: 8% !important; }
   .wb-view-new .wb-col-shift { width: 7% !important; }

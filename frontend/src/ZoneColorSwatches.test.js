@@ -3,9 +3,9 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import ZoneColorSwatches from './ZoneColorSwatches';
 
 const options = [
-  { name: 'Pink', value: '#D9468C' },
-  { name: 'Blue', value: '#2563EB' },
-  { name: 'Purple', value: '#7C3AED' },
+  { name: 'Pink', value: '#F3B6D2' },
+  { name: 'Blue', value: '#BDD9F5' },
+  { name: 'Purple', value: '#D7C6F4' },
 ];
 
 function ControlledPicker() {
@@ -22,7 +22,7 @@ test('renders colour-only accessible swatches and changes selection with arrow k
   expect(group).toBeInTheDocument();
   expect(pink).toHaveAttribute('aria-checked', 'true');
   expect(pink).toHaveTextContent('');
-  expect(pink.querySelector('.zone-color-swatch-chip')).toHaveStyle({ backgroundColor: '#D9468C' });
+  expect(pink.querySelector('.zone-color-swatch-chip')).toHaveStyle({ backgroundColor: '#F3B6D2' });
   expect(container).not.toHaveTextContent('Pink');
   expect(container).not.toHaveTextContent('Blue');
 
@@ -40,5 +40,5 @@ test('clicking a swatch reports its colour through the controlled callback', () 
 
   fireEvent.click(screen.getByRole('radio', { name: 'Purple' }));
 
-  expect(onChange).toHaveBeenCalledWith('#7C3AED');
+  expect(onChange).toHaveBeenCalledWith('#D7C6F4');
 });

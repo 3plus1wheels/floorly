@@ -136,7 +136,7 @@ function EditCell({ value, onChange, format, className, style, placeholder, text
 
   const display = value !== '' && value !== null && value !== undefined
     ? (format ? format(value) : value)
-    : <span className="wb-cell-empty">{placeholder || '—'}</span>;
+    : <span className="wb-cell-empty">{placeholder ?? '—'}</span>;
 
   return (
     <td className={`${className || ''} wb-editable`} style={style} onClick={startEdit} title="Click to edit" aria-label={ariaLabel}>
@@ -308,8 +308,9 @@ function ShiftCell({ row, editing, draft, saving, editDisabled, onEdit, onChange
 }
 
 // ─── Today's Goals panel ─────────────────────────────────────────────────────
-function TodaysGoals({ goals, sources, date, comparisonDate, onCommit }) {
+function TodaysGoals({ goals, sources, date, comparisonDate, onCommit, newView = false }) {
   const set = (key) => (val) => onCommit(key, val);
+  const emptyPlaceholder = newView ? '' : '—';
 
   const plan = parseCurrency(goals.monthSalesPlan);
   const mtd = parseCurrency(goals.monthToDateSales);
@@ -351,43 +352,43 @@ function TodaysGoals({ goals, sources, date, comparisonDate, onCommit }) {
           </tr>
           <tr className="wb-goals-highlight">
             {renderLabel('daySalesTarget', 'DAY SALES TARGET')}
-            <EditCell value={goals.daySalesTarget} onChange={set('daySalesTarget')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit day sales target" />
+            <EditCell value={goals.daySalesTarget} onChange={set('daySalesTarget')} format={formatCurrency} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit day sales target" />
           </tr>
           <tr className="wb-goals-highlight">
             {renderLabel('stretchTarget', 'STRETCH TARGET')}
-            <EditCell value={goals.stretchTarget} onChange={set('stretchTarget')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit stretch target" />
+            <EditCell value={goals.stretchTarget} onChange={set('stretchTarget')} format={formatCurrency} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit stretch target" />
           </tr>
           <tr>
             {renderLabel('lastYearSales', 'LAST YEAR SALES')}
-            <EditCell value={goals.lastYearSales} onChange={set('lastYearSales')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit last year sales" />
+            <EditCell value={goals.lastYearSales} onChange={set('lastYearSales')} format={formatCurrency} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit last year sales" />
           </tr>
           <tr>
             {renderLabel('lastYearTraffic', 'LAST YEAR TRAFFIC')}
-            <EditCell value={goals.lastYearTraffic} onChange={set('lastYearTraffic')} className="wb-goals-value" placeholder="—" ariaLabel="Edit last year traffic" />
+            <EditCell value={goals.lastYearTraffic} onChange={set('lastYearTraffic')} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit last year traffic" />
           </tr>
           <tr>
             {renderLabel('trafficTrend', 'CURRENT TRAFFIC TREND (+/-)')}
-            <EditCell value={goals.trafficTrend} onChange={set('trafficTrend')} format={v => v + '%'} className="wb-goals-value" placeholder="—" ariaLabel="Edit current traffic trend" />
+            <EditCell value={goals.trafficTrend} onChange={set('trafficTrend')} format={v => v + '%'} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit current traffic trend" />
           </tr>
           <tr className="wb-goals-computed">
             {renderLabel('projectedTraffic', 'PROJECTED TRAFFIC')}
-            <td className="wb-goals-value">{computedProjected !== null ? computedProjected : '—'}</td>
+            <td className="wb-goals-value">{computedProjected !== null ? computedProjected : emptyPlaceholder}</td>
           </tr>
           <tr className="wb-goals-highlight">
             {renderLabel('transactionGoal', 'TRANSACTION GOAL')}
-            <EditCell value={goals.transactionGoal} onChange={set('transactionGoal')} className="wb-goals-value" placeholder="—" ariaLabel="Edit transaction goal" />
+            <EditCell value={goals.transactionGoal} onChange={set('transactionGoal')} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit transaction goal" />
           </tr>
           <tr>
             {renderLabel('conversionTarget', 'CONVERSION TARGET')}
-            <EditCell value={goals.conversionTarget} onChange={set('conversionTarget')} format={v => v + '%'} className="wb-goals-value" placeholder="—" ariaLabel="Edit conversion target" />
+            <EditCell value={goals.conversionTarget} onChange={set('conversionTarget')} format={v => v + '%'} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit conversion target" />
           </tr>
           <tr>
             {renderLabel('upt', 'UPT')}
-            <EditCell value={goals.upt} onChange={set('upt')} className="wb-goals-value" placeholder="—" ariaLabel="Edit UPT" />
+            <EditCell value={goals.upt} onChange={set('upt')} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit UPT" />
           </tr>
           <tr>
             {renderLabel('atv', 'ATV')}
-            <EditCell value={goals.atv} onChange={set('atv')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit ATV" />
+            <EditCell value={goals.atv} onChange={set('atv')} format={formatCurrency} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit ATV" />
           </tr>
 
           {/* Month to date */}
@@ -396,19 +397,19 @@ function TodaysGoals({ goals, sources, date, comparisonDate, onCommit }) {
           </tr>
           <tr>
             {renderLabel('monthSalesPlan', 'MONTH SALES PLAN')}
-            <EditCell value={goals.monthSalesPlan} onChange={set('monthSalesPlan')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit month sales plan" />
+            <EditCell value={goals.monthSalesPlan} onChange={set('monthSalesPlan')} format={formatCurrency} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit month sales plan" />
           </tr>
           <tr>
             {renderLabel('monthToDateSales', 'MONTH TO DATE SALES')}
-            <EditCell value={goals.monthToDateSales} onChange={set('monthToDateSales')} format={formatCurrency} className="wb-goals-value" placeholder="—" ariaLabel="Edit month to date sales" />
+            <EditCell value={goals.monthToDateSales} onChange={set('monthToDateSales')} format={formatCurrency} className="wb-goals-value" placeholder={emptyPlaceholder} ariaLabel="Edit month to date sales" />
           </tr>
           <tr>
             {renderLabel('percentToMonthSalesPlan', '% TO MONTH SALES PLAN')}
-            <td className="wb-goals-value">{pctOfPlan}</td>
+            <td className="wb-goals-value">{newView && pctOfPlan === '—' ? '' : pctOfPlan}</td>
           </tr>
           <tr>
             {renderLabel('monthToGo', 'MONTH TO GO')}
-            <td className="wb-goals-value">{monthToGo}</td>
+            <td className="wb-goals-value">{newView && monthToGo === '—' ? '' : monthToGo}</td>
           </tr>
         </tbody>
       </table>
@@ -550,6 +551,7 @@ function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kp
                         onChange={cell.onChange}
                         format={cell.format}
                         text={cell.text}
+                        placeholder={newView ? '' : undefined}
                         ariaLabel={`Edit ${row.label} ${segments[ci].label}`}
                         className={`wb-hs-cell${cell.derived ? ' wb-hs-derived' : ''}`}
                       />
@@ -1201,7 +1203,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
         <div className="wb-zone-colors-panel">
           <div className="wb-zone-colors-title">Zone colours</div>
           <div className="wb-zone-colors-controls">
-            <label>
+            <label className="wb-zone-colors-zone">
               Zone
               <select aria-label="Zone to recolour" value={colorZone} onChange={event => {
                 const zone = event.target.value;
@@ -1211,14 +1213,19 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
                 {ZONE_OPTIONS.map(zone => <option key={zone} value={zone}>{zone}</option>)}
               </select>
             </label>
-            <ZoneColorSwatches value={colorValue} onChange={setColorValue} options={COLOR_OPTIONS} />
-            <span className="wb-zone-color-preview" style={{ backgroundColor: colorValue }} aria-hidden="true" />
-            <button className="wb-zone-color-apply" disabled={zoneColors[colorZone] === colorValue} onClick={() => saveZoneColors(applyZoneColor(zoneColors, colorZone, colorValue))}>Apply</button>
-            <button className="wb-zone-color-reset" onClick={() => {
-              const defaults = { ...DEFAULT_ZONE_COLORS };
-              saveZoneColors(defaults);
-              setColorValue(defaults[colorZone]);
-            }}>Reset colours</button>
+            <div className="wb-zone-colors-palette">
+              <span className="wb-zone-colors-label">Colour</span>
+              <ZoneColorSwatches value={colorValue} onChange={setColorValue} options={COLOR_OPTIONS} />
+            </div>
+            <div className="wb-zone-colors-actions">
+              <span className="wb-zone-color-preview" style={{ backgroundColor: colorValue }} aria-label="Selected colour preview" />
+              <button className="wb-zone-color-apply" disabled={zoneColors[colorZone] === colorValue} onClick={() => saveZoneColors(applyZoneColor(zoneColors, colorZone, colorValue))}>Apply</button>
+              <button className="wb-zone-color-reset" onClick={() => {
+                const defaults = { ...DEFAULT_ZONE_COLORS };
+                saveZoneColors(defaults);
+                setColorValue(defaults[colorZone]);
+              }}>Reset colours</button>
+            </div>
           </div>
           {colorOwner && <div className="wb-zone-colors-hint">{colorOwner} will take {colorZone}'s current colour, keeping every zone distinct.</div>}
         </div>
@@ -1274,6 +1281,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
                 date={kpiState?.date || data?.date}
                 comparisonDate={kpiState?.comparisonDate}
                 onCommit={commitGoal}
+                newView
               />
               <WorkbookPromos
                 date={requestedDate}

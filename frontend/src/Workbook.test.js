@@ -267,6 +267,25 @@ describe('Workbook KPI persistence', () => {
     expect(localStorage.getItem('floorly-workbook-view')).toBe('old');
   });
 
+  test('keeps empty New-view cells blank but editable', async () => {
+    render(<Workbook />);
+    const oldStretch = await screen.findByLabelText('Edit stretch target');
+    expect(oldStretch).toHaveTextContent('—');
+
+    fireEvent.click(screen.getByRole('button', { name: 'New' }));
+    const stretch = screen.getByLabelText('Edit stretch target');
+    const traffic = screen.getByLabelText('Edit TRAFFIC 10am - 11am');
+    expect(stretch).not.toHaveTextContent('—');
+    expect(traffic).not.toHaveTextContent('—');
+
+    fireEvent.click(traffic);
+    const input = screen.getByRole('textbox', { name: 'Edit TRAFFIC 10am - 11am' });
+    expect(input).toHaveAttribute('placeholder', '');
+    fireEvent.change(input, { target: { value: '7' } });
+    fireEvent.blur(input);
+    expect(await screen.findByLabelText('Edit TRAFFIC 10am - 11am')).toHaveTextContent('7');
+  });
+
   test('warns before leaving a day with unsaved promo edits', async () => {
     const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
     try {
