@@ -125,6 +125,20 @@ docker compose exec backend python manage.py import_schedule /path/in/container/
 
 Use `--clear` only when selected organization’s shifts should be removed first.
 
+## Demo organization
+
+Create an isolated demo tenant from an existing organization's staffing pattern. The command copies one week of shift times, roles, floor-map rules, zone skills, and manual zone assignments, while replacing every employee name and omitting accounts, employee links, workbook name overrides, KPI data, and promo notes.
+
+```bash
+docker compose exec backend python manage.py create_demo_organization \
+  --source-organization-id 1 \
+  --name "Floorly Demo" \
+  --week-start 2026-09-28 \
+  --member-username admin
+```
+
+`--week-start` must be a Monday and defaults to the current week in Edmonton. Use `--target-week-start YYYY-MM-DD` to move the same seven-day pattern to another week. Repeat `--member-username` to grant existing non-admin users access. The command refuses to overwrite an existing organization.
+
 ## Containers
 
 - `frontend`: React build served by Nginx on port 3000; proxies `/api/` to Django.
