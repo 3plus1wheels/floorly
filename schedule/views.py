@@ -460,8 +460,18 @@ class ShiftListView(APIView):
 
 
 class ShiftDetailView(APIView):
-    """Update a shift time or its day-specific workbook display name."""
+    """Update or delete a shift in the selected organization."""
     permission_classes = [IsAuthenticated]
+
+    def delete(self, request, shift_id):
+        organization = organization_for_request(request)
+        shift = get_object_or_404(
+            Shift,
+            pk=shift_id,
+            employee__organization=organization,
+        )
+        shift.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def patch(self, request, shift_id):
         organization = organization_for_request(request)

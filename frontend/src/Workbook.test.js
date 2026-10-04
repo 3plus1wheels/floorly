@@ -537,4 +537,64 @@ describe('Workbook KPI persistence', () => {
     await waitFor(() => expect(workbookLoads).toBe(2));
     expect(await screen.findByRole('button', { name: 'Edit workbook name for Alex Taylor' })).toHaveTextContent('DAY ALEX');
   });
+
+  test('confirms deletion and reloads the shared workbook', async () => {
+    let deleted = false;
+    fetchMock.mockImplementation(async (url, options = {}) => {
+      const parsed = new URL(String(url), 'http://localhost');
+      if (parsed.pathname === '/api/schedule/workbook/') {
+        return response({
+          date: '2026-09-14', day: 'Mon', hours: [9], col_headers: ['9am-10am'],
+          rows: deleted ? [] : [{
+            shift_id: 701, name: 'ALEX', full_name: 'Alex Taylor', shift: '9-12',
+            start_time: '09:00', end_time: '12:00', zones: { 9: 'WOMENS' }, zone_overrides: {},
+          }],
+          kpi: makeKpi('2026-09-14'),
+        });
+      }
+      if (parsed.pathname === '/api/schedule/shifts/701/' && options.method === 'DELETE') {
+        deleted = true;
+        return response(null, 204);
+      }
+      return response({});
+    });
+
+    render(<Workbook />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit shift for ALEX' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete shift for ALEX' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Alex Taylor · 2026-09-14 · 9-12');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/api/schedule/shifts/701/'), expect.objectContaining({ method: 'DELETE' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete shift for ALEX' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete shift' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/schedule/shifts/701/'),
+      expect.objectContaining({ method: 'DELETE', headers: expect.objectContaining({ 'X-Organization-ID': '41' }) }),
+    ));
+    expect(await screen.findByText('No shifts for Mon 2026-09-14')).toBeInTheDocument();
+  });
+
+  test('keeps the confirmation open when deletion fails', async () => {
+    fetchMock.mockImplementation(async (url, options = {}) => {
+      const parsed = new URL(String(url), 'http://localhost');
+      if (parsed.pathname === '/api/schedule/workbook/') {
+        return response({
+          date: '2026-09-14', day: 'Mon', hours: [], col_headers: [],
+          rows: [{ shift_id: 702, name: 'ALEX', shift: '9-12', start_time: '09:00', end_time: '12:00', zones: {}, zone_overrides: {} }],
+          kpi: makeKpi('2026-09-14'),
+        });
+      }
+      if (options.method === 'DELETE') return response({ error: 'Shift could not be removed.' }, 500);
+      return response({});
+    });
+
+    render(<Workbook />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit shift for ALEX' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete shift for ALEX' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete shift' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Shift could not be removed.');
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete shift' })).toBeEnabled();
+  });
 });

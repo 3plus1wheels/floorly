@@ -541,6 +541,11 @@
   border-color: rgba(23, 105, 67, 0.35);
 }
 
+.App .wb-shift-editor-actions .wb-shift-delete-button {
+  color: #a3342d !important;
+  border-color: rgba(163, 52, 45, 0.35);
+}
+
 .App .wb-shift-editor-actions button:hover {
   background: #f8f5ef !important;
   transform: none !important;
@@ -572,6 +577,46 @@
   background: #fff0ee;
   font-size: 11px;
 }
+
+.wb-delete-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgb(18 22 34 / 48%);
+}
+
+.wb-delete-dialog {
+  width: min(100%, 380px);
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  color: var(--color-text);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
+}
+
+.wb-delete-dialog h3 { margin: 0 0 10px; font-size: 17px; }
+.wb-delete-dialog p { margin: 0 0 12px; font-size: 13px; line-height: 1.45; }
+.wb-delete-dialog .wb-delete-error { color: #a3342d; }
+.wb-delete-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.App .wb-delete-actions button {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-card);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.App .wb-delete-actions .wb-delete-confirm {
+  border-color: #a3342d;
+  background: #a3342d;
+  color: #fff;
+}
+.App .wb-delete-actions button:disabled { opacity: 0.5; cursor: default; }
 
 .wb-hour-cell {
   padding: clamp(2px, 0.22vw, 4px) clamp(2px, 0.2vw, 4px);
@@ -1241,6 +1286,7 @@
   .wb-zone-print-value { display: inline !important; }
   .wb-shift-edit-button,
   .wb-shift-editor,
+  .wb-delete-backdrop,
   .wb-name-edit-button,
   .wb-name-editor,
   .wb-shift-save-error { display: none !important; }

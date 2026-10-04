@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { AlertTriangle, Check, Inbox, LoaderCircle, Printer, Settings2, X } from 'lucide-react';
+import { AlertTriangle, Check, Inbox, LoaderCircle, Printer, Settings2, Trash2, X } from 'lucide-react';
 import API_BASE from './config';
 import { useAuth } from './AuthContext';
 import { applyZoneColor, COLOR_OPTIONS, DEFAULT_ZONE_COLORS, normalizeZoneColors, ZONE_OPTIONS, zoneStyle } from './zoneColors';
@@ -263,7 +263,7 @@ function NameCell({ row, editing, draft, saving, editDisabled, onEdit, onChange,
   );
 }
 
-function ShiftCell({ row, editing, draft, saving, editDisabled, onEdit, onChange, onSave, onCancel }) {
+function ShiftCell({ row, editing, draft, saving, editDisabled, onEdit, onChange, onSave, onCancel, onDelete }) {
   const changed = draft.start_time !== row.start_time || draft.end_time !== row.end_time;
   const canSave = changed && validShiftTimes(draft.start_time, draft.end_time) && !saving;
 
@@ -296,6 +296,7 @@ function ShiftCell({ row, editing, draft, saving, editDisabled, onEdit, onChange
               {saving ? <LoaderCircle className="wb-shift-spinner" /> : <Check />}
             </button>
             <button type="button" aria-label={`Cancel shift edit for ${row.name}`} title="Cancel" disabled={saving} onClick={onCancel}><X /></button>
+            <button type="button" className="wb-shift-delete-button" aria-label={`Delete shift for ${row.name}`} title="Delete shift" disabled={saving} onClick={onDelete}><Trash2 /></button>
           </div>
         </div>
       ) : (
@@ -598,6 +599,9 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const [shiftDraft, setShiftDraft] = useState({ start_time: '', end_time: '' });
   const [shiftSaveStatus, setShiftSaveStatus] = useState('saved');
   const [shiftSaveError, setShiftSaveError] = useState('');
+  const [shiftToDelete, setShiftToDelete] = useState(null);
+  const [deleteStatus, setDeleteStatus] = useState('idle');
+  const [deleteError, setDeleteError] = useState('');
   const [editingNameShiftId, setEditingNameShiftId] = useState(null);
   const [nameDraft, setNameDraft] = useState('');
   const [nameSaveStatus, setNameSaveStatus] = useState('saved');
@@ -667,6 +671,9 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     setShiftDraft({ start_time: '', end_time: '' });
     setShiftSaveStatus('saved');
     setShiftSaveError('');
+    setShiftToDelete(null);
+    setDeleteStatus('idle');
+    setDeleteError('');
     setEditingNameShiftId(null);
     setNameDraft('');
     setNameSaveStatus('saved');
@@ -750,6 +757,28 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
     } catch (err) {
       setShiftSaveStatus('error');
       setShiftSaveError(err.message || 'Could not save shift times.');
+    }
+  };
+
+  const deleteShift = async () => {
+    if (!shiftToDelete || deleteStatus === 'saving') return;
+    const shiftId = shiftToDelete.shift_id;
+    setDeleteStatus('saving');
+    setDeleteError('');
+    try {
+      const response = await fetch(`${API_BASE}/api/schedule/shifts/${shiftId}/`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}`, 'X-Organization-ID': selectedOrganizationId },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Could not delete this shift.');
+      }
+      setShiftToDelete(null);
+      await fetchWorkbook();
+    } catch (err) {
+      setDeleteStatus('error');
+      setDeleteError(err.message || 'Could not delete this shift.');
     }
   };
 
@@ -1010,6 +1039,7 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
                       onChange={setShiftDraft}
                       onSave={() => saveShiftEdit(row.shift_id)}
                       onCancel={cancelShiftEdit}
+                      onDelete={() => { setShiftToDelete(row); setDeleteStatus('idle'); setDeleteError(''); }}
                     />
                     {data.hours.map(h => {
                       const zone = row.zones[String(h)];
@@ -1305,6 +1335,26 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
                 newView
               />
               {zoneSection}
+            </div>
+          </div>
+        </div>
+      )}
+      {shiftToDelete && (
+        <div className="wb-delete-backdrop">
+          <div className="wb-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="wb-delete-title" aria-describedby="wb-delete-description" onKeyDown={event => {
+            if (event.key === 'Escape' && deleteStatus !== 'saving') setShiftToDelete(null);
+          }}>
+            <h3 id="wb-delete-title">Delete shift?</h3>
+            <p id="wb-delete-description">
+              {shiftToDelete.full_name || shiftToDelete.name} · {data?.date} · {shiftToDelete.shift}
+            </p>
+            <p>This removes the shift and its zone assignments for everyone in this organization.</p>
+            {deleteError && <p className="wb-delete-error" role="alert">{deleteError}</p>}
+            <div className="wb-delete-actions">
+              <button type="button" autoFocus disabled={deleteStatus === 'saving'} onClick={() => setShiftToDelete(null)}>Cancel</button>
+              <button type="button" className="wb-delete-confirm" disabled={deleteStatus === 'saving'} onClick={deleteShift}>
+                {deleteStatus === 'saving' ? 'Deleting…' : 'Delete shift'}
+              </button>
             </div>
           </div>
         </div>

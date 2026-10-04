@@ -1155,6 +1155,35 @@ class ShiftTimeUpdateTests(TestCase):
         self.client.credentials(HTTP_X_ORGANIZATION_ID=str(self.organization.id))
         self.url = reverse('shift_detail', args=[self.shift.id])
 
+    def test_delete_removes_shift_and_zone_assignments_from_shared_views(self):
+        override = WorkbookZoneOverride.objects.create(
+            shift=self.shift, hour=9, zone='CASH', last_edited_by=self.user)
+        another_shift = Shift.objects.create(
+            employee=self.employee, date=date(2026, 9, 8),
+            start_time=time(9), end_time=time(12), role='Stylist')
+
+        response = self.client.delete(self.url)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Shift.objects.filter(pk=self.shift.pk).exists())
+        self.assertFalse(WorkbookZoneOverride.objects.filter(pk=override.pk).exists())
+        self.assertTrue(Shift.objects.filter(pk=another_shift.pk).exists())
+        workbook = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Mon'})
+        self.assertEqual(workbook.data['rows'], [])
+        schedule = self.client.get(reverse('shift_list'), {'week_start': '2026-09-07'})
+        self.assertEqual([shift['id'] for shift in schedule.data], [another_shift.pk])
+
+    def test_delete_requires_authentication_and_selected_organization(self):
+        other = Organization.objects.create(name='Other Shift Store')
+        OrganizationMembership.objects.create(user=self.user, organization=other)
+        self.client.credentials(HTTP_X_ORGANIZATION_ID=str(other.id))
+        self.assertEqual(self.client.delete(self.url).status_code, 404)
+        self.assertTrue(Shift.objects.filter(pk=self.shift.pk).exists())
+
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.delete(self.url).status_code, 401)
+        self.assertTrue(Shift.objects.filter(pk=self.shift.pk).exists())
+
     def test_updates_times_recalculates_workbook_and_removes_only_out_of_range_overrides(self):
         for hour in (9, 10, 11):
             WorkbookZoneOverride.objects.create(
