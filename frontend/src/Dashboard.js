@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from './AuthContext';
-import { Download, LoaderCircle, Palette, Settings } from 'lucide-react';
+import { Download, HelpCircle, LoaderCircle, Palette, Settings } from 'lucide-react';
 import Workbook from './Workbook';
 import Staff from './Staff';
 import AdminPanel from './AdminPanel';
@@ -12,6 +12,38 @@ import { PRIVACY_POLICY_VERSION } from './LegalPages';
 import './App.css';
 
 const PRESET_ORDER = ['classic', 'ocean', 'forest'];
+
+function ExtensionHelpModal({ open, onClose }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = event => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div className="settings-modal-backdrop" onClick={onClose}>
+      <section className="settings-modal extension-help-modal" role="dialog" aria-modal="true" aria-labelledby="extension-help-title" onClick={event => event.stopPropagation()}>
+        <div className="settings-modal-header">
+          <h3 id="extension-help-title">Install the Kronos extension</h3>
+          <button type="button" className="settings-close-btn" onClick={onClose} autoFocus>Close</button>
+        </div>
+        <p className="settings-help">Install the Floorly Schedule Import extension once in the same browser you use for Kronos.</p>
+        <ol className="extension-help-steps">
+          <li>Open Google Drive using the button below, download the extension, and unzip the downloaded file.</li>
+          <li>In Chrome, open <strong>chrome://extensions</strong> (or <strong>edge://extensions</strong> in Microsoft Edge) and turn on <strong>Developer mode</strong>.</li>
+          <li>Choose <strong>Load unpacked</strong> and select the extracted folder containing <strong>manifest.json</strong>.</li>
+          <li>Open Kronos, refresh the page, and go to <strong>My Location Schedule</strong>. Select the same week in Kronos and Floorly, then click <strong>Import from Kronos</strong>.</li>
+        </ol>
+        <p className="settings-help">Updating? Replace the files in your existing extension folder, click Reload on the extensions page, and refresh Kronos.</p>
+        <div className="settings-actions-row">
+          {EXTENSION_STORE_URL ? <a className="settings-save-btn extension-drive-link" href={EXTENSION_STORE_URL} target="_blank" rel="noopener noreferrer">Open extension in Google Drive</a> : <p className="settings-help">The extension download link is not available yet. Contact your administrator.</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function ThemeSettingsModal({
   open,
@@ -145,6 +177,7 @@ function ImportConsentModal({ open, checked, onCheck, onConfirm, onClose }) {
 function Dashboard() {
   const [activeTab, setActiveTab] = useState('workbook');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [extensionHelpOpen, setExtensionHelpOpen] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState('classic');
   const [customTheme, setCustomTheme] = useState({ ...THEME_PRESETS.classic.colors });
   const [savingTheme, setSavingTheme] = useState(false);
@@ -347,6 +380,9 @@ function Dashboard() {
               </button>
               {kronosState !== 'idle' && <span className={`kronos-status kronos-status-${kronosState}`}>{kronosState}</span>}
             </div>
+            <button type="button" className="settings-btn extension-help-btn" onClick={() => setExtensionHelpOpen(true)}>
+              <HelpCircle size={14} /> Extension help
+            </button>
             <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
               <Settings size={14} />
               Settings
@@ -397,6 +433,7 @@ function Dashboard() {
         onCustomChange={handleCustomChange}
         onSave={saveTheme}
       />
+      <ExtensionHelpModal open={extensionHelpOpen} onClose={() => setExtensionHelpOpen(false)} />
       <EmployeeIdentityModal
         mapping={employeeMapping}
         selectedEmployeeId={selectedEmployeeId}

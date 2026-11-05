@@ -1,7 +1,7 @@
 import API_BASE from './config';
 
 export const EXTENSION_ID = process.env.REACT_APP_FLOORLY_EXTENSION_ID || 'picamnkkmfkicagkibpednpkjbdioodh';
-export const EXTENSION_STORE_URL = process.env.REACT_APP_FLOORLY_EXTENSION_STORE_URL || '';
+export const EXTENSION_STORE_URL = process.env.REACT_APP_FLOORLY_EXTENSION_STORE_URL || 'https://drive.google.com/drive/folders/1Tj5YDKSJZesRCGoI7ffHKyw5hj9a2Bj9';
 
 export const KRONOS_ERRORS = {
   EXTENSION_NOT_CONFIGURED: 'Kronos extension is not configured for this Floorly build.',
