@@ -7,6 +7,17 @@ test('normalizes 24-hour, ISO, and 12-hour times', () => {
   assert.equal(normalizeShift({ employee: 'Jane', job: 'Stylist', date: '2026-09-08', startTime: '2026-09-08T09:30:00', endTime: '5:00 PM' }).start_time, '09:30');
 });
 
+test('parses two-digit evening hours and midnight correctly', () => {
+  assert.deepEqual(parseShiftTitle('6:45 PM - 10:00 PM'), [{ start_time: '18:45', end_time: '22:00' }]);
+  assert.deepEqual(parseShiftTitle('10:00 PM - 11:30 PM'), [{ start_time: '22:00', end_time: '23:30' }]);
+  assert.deepEqual(parseShiftTitle('12:00 AM - 12:00 PM'), [{ start_time: '00:00', end_time: '12:00' }]);
+});
+
+test('rejects genuine overnight shifts after parsing AM and PM', () => {
+  assert.throws(() => normalizeShift({ employee: 'Jane', job: 'Stylist', date: '2026-11-27', startTime: '10:00 PM', endTime: '12:00 AM' }),
+    error => error.code === 'SHIFT_TIME_ORDER_INVALID');
+});
+
 test('validates week while preserving duplicate shifts', () => {
   const shift = { employee: 'Thompson, Sierra', job: 'Management', date: '2026-09-13', startTime: '09:00', endTime: '12:00' };
   assert.equal(validateWeek([shift, shift], '2026-09-07').shifts.length, 2);

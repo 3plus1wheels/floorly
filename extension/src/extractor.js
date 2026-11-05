@@ -15,10 +15,10 @@ const addDays = (iso, days) => {
 
 function time(value) {
   const raw = text(value);
-  const iso = raw.match(/(?:T|\b)([01]\d|2[0-3]):([0-5]\d)/);
-  if (iso) return `${iso[1]}:${iso[2]}`;
   const twelve = raw.match(/^(\d{1,2}):(\d{2})\s*([AP])M$/i);
   if (!twelve) {
+    const iso = raw.match(/(?:T|\b)([01]\d|2[0-3]):([0-5]\d)/);
+    if (iso) return `${iso[1]}:${iso[2]}`;
     const twentyFour = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
     return twentyFour ? `${String(Number(twentyFour[1])).padStart(2, '0')}:${twentyFour[2]}` : raw.slice(0, 5);
   }
