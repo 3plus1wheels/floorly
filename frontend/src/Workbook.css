@@ -1857,3 +1857,17 @@
   .wb-view-new .wb-col-shift { width: 7% !important; }
   .wb-view-new .wb-col-hour { width: var(--wb-new-hour-width) !important; }
 }
+
+.wb-extra-people { margin: 20px 0; padding: 18px; border: 1px solid #ddd5cc; border-radius: 10px; background: #fff; }
+.wb-extra-people h3 { margin: 0 0 4px; font-size: 16px; }
+.wb-extra-people p { margin: 0 0 12px; color: #68646a; font-size: 13px; }
+.wb-extra-form, .wb-extra-remove { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.wb-extra-people label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; }
+.wb-extra-people input, .wb-extra-people select { min-height: 38px; padding: 7px 9px; border: 1px solid #c9c5c0; border-radius: 6px; background: white; color: #24242b; }
+.wb-extra-form label:first-child input, .wb-extra-remove select { min-width: 220px; }
+.wb-extra-people button { min-height: 38px; padding: 8px 14px; border: 1px solid #b70000; border-radius: 6px; background: #b70000; color: white; cursor: pointer; }
+.wb-extra-people button:disabled { opacity: .5; cursor: not-allowed; }
+.wb-extra-people .wb-extra-hint { margin: 8px 0 16px; }
+.wb-extra-people .wb-extra-error { color: #b00020; }
+.wb-extra-remove button { background: white; color: #a00000; }
+@media print { .wb-extra-people { display: none !important; } }

@@ -21,6 +21,7 @@ from .models import (
     WORKBOOK_ZONE_CHOICES, ZONE_FIELDS,
 )
 from .serializers import ShiftSerializer, EmployeeSerializer, StaffZoneSerializer
+from .parsers import _normalize_role
 from .authentication import ScheduleSyncAuthentication, ScheduleSyncToken
 from .identity import canonical_employee_name, default_workbook_name, workbook_name_parts, employee_summary, find_employee_by_name
 from api.organization_context import organization_for_request
@@ -457,6 +458,37 @@ class ShiftListView(APIView):
 
         serializer = ShiftSerializer(shifts, many=True)
         return Response(serializer.data)
+
+
+    def post(self, request):
+        organization = organization_for_request(request)
+        if not isinstance(request.data, dict) or set(request.data) != {'employee_id', 'date', 'start_time', 'end_time'}:
+            return Response({'error': 'Provide employee_id, date, start_time and end_time.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            shift_date = _parse_iso_date(request.data['date'], 'date')
+            start_time = _parse_hhmm(request.data['start_time'], 'start_time')
+            end_time = _parse_hhmm(request.data['end_time'], 'end_time')
+        except (PayloadError, TypeError, ValueError) as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        if start_time.minute % WORKBOOK_INTERVAL_MINUTES or end_time.minute % WORKBOOK_INTERVAL_MINUTES:
+            return Response({'error': 'Shift times must use 15-minute increments.'}, status=status.HTTP_400_BAD_REQUEST)
+        if end_time <= start_time:
+            return Response({'error': 'end_time must be after start_time.'}, status=status.HTTP_400_BAD_REQUEST)
+        employee_id = request.data['employee_id']
+        if isinstance(employee_id, bool) or not isinstance(employee_id, int):
+            return Response({'error': 'employee_id must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+        employee = get_object_or_404(Employee, pk=employee_id, organization=organization)
+        if employee.role_override == 'non_active':
+            return Response({'error': 'This employee is inactive.'}, status=status.HTTP_400_BAD_REQUEST)
+        latest = employee.shifts.filter(date__lte=shift_date).order_by('-date', '-start_time', '-id').first()
+        role = latest.role if latest else _normalize_role('', start_time, end_time, shift_date.strftime('%a'), employee.primary_job)
+        try:
+            with transaction.atomic():
+                shift = Shift.objects.create(employee=employee, date=shift_date, day_label=shift_date.strftime('%a'),
+                                             start_time=start_time, end_time=end_time, role=role)
+        except IntegrityError:
+            return Response({'error': 'This employee already has a shift at that start time.'}, status=status.HTTP_409_CONFLICT)
+        return Response(ShiftSerializer(shift).data, status=status.HTTP_201_CREATED)
 
 
 class ShiftDetailView(APIView):

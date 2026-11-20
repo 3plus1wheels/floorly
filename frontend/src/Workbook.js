@@ -599,6 +599,12 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   const [shiftDraft, setShiftDraft] = useState({ start_time: '', end_time: '' });
   const [shiftSaveStatus, setShiftSaveStatus] = useState('saved');
   const [shiftSaveError, setShiftSaveError] = useState('');
+  const [employees, setEmployees] = useState([]);
+  const [employeeQuery, setEmployeeQuery] = useState('');
+  const [addDraft, setAddDraft] = useState({ start_time: '', end_time: '' });
+  const [addStatus, setAddStatus] = useState('idle');
+  const [addError, setAddError] = useState('');
+  const [removeShiftId, setRemoveShiftId] = useState('');
   const [shiftToDelete, setShiftToDelete] = useState(null);
   const [deleteStatus, setDeleteStatus] = useState('idle');
   const [deleteError, setDeleteError] = useState('');
@@ -714,6 +720,55 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
   }, [weekStart, activeDay, token, selectedOrganizationId]);
 
   useEffect(() => { fetchWorkbook(); }, [fetchWorkbook, refreshVersion]);
+
+  useEffect(() => {
+    let active = true;
+    setEmployees([]);
+    setEmployeeQuery('');
+    setAddDraft({ start_time: '', end_time: '' });
+    setRemoveShiftId('');
+    setAddError('');
+    fetch(`${API_BASE}/api/schedule/employees/`, {
+      headers: { Authorization: `Bearer ${token}`, 'X-Organization-ID': selectedOrganizationId },
+    }).then(res => { if (!res.ok) throw new Error('Could not load staff.'); return res.json(); })
+      .then(items => { if (active) setEmployees(items.filter(item => item.role_override !== 'non_active')); })
+      .catch(() => { if (active) setAddError('Could not load staff suggestions.'); });
+    return () => { active = false; };
+  }, [selectedOrganizationId, requestedDate, token, refreshVersion]);
+
+  const selectedEmployee = employees.find(employee => employee.name.toLowerCase() === employeeQuery.trim().toLowerCase());
+  const chooseEmployee = value => {
+    setEmployeeQuery(value);
+    const employee = employees.find(item => item.name.toLowerCase() === value.trim().toLowerCase());
+    if (!employee) { setAddDraft({ start_time: '', end_time: '' }); return; }
+    const latest = (employee.shifts || []).filter(shift => shift.date < requestedDate)
+      .sort((a, b) => b.date.localeCompare(a.date) || b.start_time.localeCompare(a.start_time))[0];
+    if (latest) {
+      setAddDraft({ start_time: latest.start_time.slice(0, 5), end_time: latest.end_time.slice(0, 5) });
+    } else {
+      const management = employee.role_override === 'management' || (employee.role_override !== 'associate' && /manager|supervisor|leader|cel/i.test(employee.primary_job));
+      setAddDraft({ start_time: '09:00', end_time: management ? '17:30' : '13:45' });
+    }
+  };
+  const addShift = async event => {
+    event.preventDefault();
+    if (!selectedEmployee || !validShiftTimes(addDraft.start_time, addDraft.end_time) || addStatus === 'saving') return;
+    const scope = scopeKey;
+    setAddStatus('saving'); setAddError('');
+    try {
+      const res = await fetch(`${API_BASE}/api/schedule/shifts/`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Organization-ID': selectedOrganizationId, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employee_id: selectedEmployee.id, date: requestedDate, ...addDraft }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Could not add shift.');
+      if (currentScopeRef.current !== scope) return;
+      setEmployeeQuery(''); setAddDraft({ start_time: '', end_time: '' });
+      await fetchWorkbook();
+    } catch (err) { if (currentScopeRef.current === scope) setAddError(err.message); }
+    finally { setAddStatus('idle'); }
+  };
+
 
   const startShiftEdit = row => {
     if (shiftSaveStatus === 'saving' || nameSaveStatus === 'saving') return;
@@ -1087,6 +1142,20 @@ export default function Workbook({ onWeekChange, refreshVersion = 0 }) {
           return <span key={zone} className="wb-legend-item" style={{ backgroundColor: style.bg, color: style.text }}>{zone}</span>;
         })}
       </div>
+      {data && <section className="wb-extra-people" aria-label="Manage shifts">
+        <div><h3>Manage shifts</h3><p>Add a person to this day or remove a scheduled shift.</p></div>
+        <form className="wb-extra-form" onSubmit={addShift}>
+          <label>Person<input list="wb-employee-suggestions" value={employeeQuery} onChange={event => chooseEmployee(event.target.value)} placeholder="Type a name" autoComplete="off" /></label>
+          <datalist id="wb-employee-suggestions">{employees.map(employee => <option key={employee.id} value={employee.name} />)}</datalist>
+          <label>Start<input aria-label="New shift start" type="time" step="900" value={addDraft.start_time} onChange={event => setAddDraft({ ...addDraft, start_time: event.target.value })} /></label>
+          <label>End<input aria-label="New shift end" type="time" step="900" value={addDraft.end_time} onChange={event => setAddDraft({ ...addDraft, end_time: event.target.value })} /></label>
+          <button type="submit" disabled={!selectedEmployee || !validShiftTimes(addDraft.start_time, addDraft.end_time) || addStatus === 'saving'}>{addStatus === 'saving' ? 'Adding…' : 'Add shift'}</button>
+        </form>
+        <p className="wb-extra-hint">Times suggest the most recent earlier shift, or a 4h 45m stylist / 8h 30m management shift. Adjust as needed.</p>
+        {addError && <p role={addError === 'Could not load staff suggestions.' ? 'status' : 'alert'} className="wb-extra-error">{addError}</p>}
+        {data.rows.length > 0 && <div className="wb-extra-remove"><label>Remove shift<select value={removeShiftId} onChange={event => setRemoveShiftId(event.target.value)}><option value="">Select a shift</option>{data.rows.map(row => <option key={row.shift_id} value={row.shift_id}>{row.full_name || row.name} · {row.shift}</option>)}</select></label><button type="button" disabled={!removeShiftId} onClick={() => { setDeleteError(''); setDeleteStatus('idle'); setShiftToDelete(data.rows.find(row => String(row.shift_id) === removeShiftId)); }}>Remove…</button></div>}
+      </section>}
+
     </div>
   );
 

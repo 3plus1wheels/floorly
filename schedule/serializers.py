@@ -20,7 +20,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Employee
-        fields = ['id', 'name', 'primary_job', 'shifts']
+        fields = ['id', 'name', 'primary_job', 'role_override', 'shifts']
 
 
 class StaffZoneSerializer(serializers.ModelSerializer):

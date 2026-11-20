@@ -1155,6 +1155,25 @@ class ShiftTimeUpdateTests(TestCase):
         self.client.credentials(HTTP_X_ORGANIZATION_ID=str(self.organization.id))
         self.url = reverse('shift_detail', args=[self.shift.id])
 
+    def test_add_shift_uses_employee_role_and_appears_in_workbook(self):
+        response = self.client.post(reverse('shift_list'), {
+            'employee_id': self.employee.id, 'date': '2026-09-08',
+            'start_time': '10:00', 'end_time': '14:45',
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['role'], 'Stylist')
+        workbook = self.client.get(reverse('workbook'), {'week_start': '2026-09-07', 'day': 'Tue'})
+        self.assertEqual([row['shift_id'] for row in workbook.data['rows']], [response.data['id']])
+
+    def test_add_shift_validates_times_duplicates_and_organization(self):
+        payload = {'employee_id': self.employee.id, 'date': '2026-09-07',
+                   'start_time': '09:00', 'end_time': '12:00'}
+        self.assertEqual(self.client.post(reverse('shift_list'), payload, format='json').status_code, 409)
+        self.assertEqual(self.client.post(reverse('shift_list'), {**payload, 'start_time': '09:07'}, format='json').status_code, 400)
+        other = Organization.objects.create(name='Another Store')
+        outsider = Employee.objects.create(organization=other, name='Other Person')
+        self.assertEqual(self.client.post(reverse('shift_list'), {**payload, 'employee_id': outsider.id}, format='json').status_code, 404)
+
     def test_delete_removes_shift_and_zone_assignments_from_shared_views(self):
         override = WorkbookZoneOverride.objects.create(
             shift=self.shift, hour=9, zone='CASH', last_edited_by=self.user)
