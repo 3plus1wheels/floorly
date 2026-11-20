@@ -286,6 +286,25 @@ describe('Workbook KPI persistence', () => {
     expect(await screen.findByLabelText('Edit TRAFFIC 10am - 11am')).toHaveTextContent('7');
   });
 
+  test('edits and saves early hourly slots while ignoring blank contributions', async () => {
+    render(<Workbook />);
+    await screen.findByText("TODAY'S GOALS");
+    fireEvent.click(screen.getByRole('button', { name: 'New' }));
+    const contribution = screen.getByLabelText('Edit HOURLY SALES CONTRIBUTION % 8am - 9am');
+    expect(contribution).toHaveTextContent('');
+    expect(screen.getByText('100%')).toBeInTheDocument();
+    fireEvent.click(contribution);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Edit HOURLY SALES CONTRIBUTION % 8am - 9am' }), { target: { value: '5' } });
+    fireEvent.blur(screen.getByRole('textbox', { name: 'Edit HOURLY SALES CONTRIBUTION % 8am - 9am' }));
+    await waitFor(() => expect(mockKpiState.hourly['8'].pct).toBe(5));
+    expect(screen.getByText('105%')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Edit TRAFFIC 9am - 10am'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Edit TRAFFIC 9am - 10am' }), { target: { value: '7' } });
+    fireEvent.blur(screen.getByRole('textbox', { name: 'Edit TRAFFIC 9am - 10am' }));
+    await waitFor(() => expect(mockKpiState.hourly['9'].traffic).toBe(7));
+  });
+
   test('warns before leaving a day with unsaved promo edits', async () => {
     const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
     try {

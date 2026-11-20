@@ -13,6 +13,8 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 // ─── Hourly segments configuration ───────────────────────────────────────────
 // Each segment: label shown in header, start hour (24h), end hour (24h)
 const DEFAULT_SEGMENTS = [
+  { label: '8am - 9am', start: 8, end: 9 },
+  { label: '9am - 10am', start: 9, end: 10 },
   { label: '10am - 11am', start: 10, end: 11 },
   { label: '11am - 12pm', start: 11, end: 12 },
   { label: '12pm - 1pm',  start: 12, end: 13 },
@@ -27,7 +29,7 @@ const DEFAULT_SEGMENTS = [
 ];
 
 // Default contribution percentages (must total 100)
-const DEFAULT_CONTRIBUTIONS = [3, 6, 8, 9, 12, 15, 12, 9, 9, 9, 8];
+const DEFAULT_CONTRIBUTIONS = [null, null, 3, 6, 8, 9, 12, 15, 12, 9, 9, 9, 8];
 
 // Default KPI rows shown in Hourly Segments (user can remove or add custom ones)
 const DEFAULT_KPI_ROWS = [
@@ -50,7 +52,7 @@ const EMPTY_GOALS = {
 
 function defaultHourly() {
   return DEFAULT_SEGMENTS.map((_, i) => ({
-    pct: DEFAULT_CONTRIBUTIONS[i] ?? 0,
+    pct: DEFAULT_CONTRIBUTIONS[i],
     actual: null, traffic: null, transactions: null, upt: null, atv: null, other: null, cel: '',
   }));
 }
@@ -423,8 +425,8 @@ function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kp
   const daySales   = parseCurrency(goals.daySalesTarget) || 0;
   const dayStretch = parseCurrency(goals.stretchTarget)  || 0;
 
-  const contribs = segments.map((_, i) => hourly[i]?.pct ?? DEFAULT_CONTRIBUTIONS[i] ?? 0);
-  const totalPct = contribs.reduce((a, b) => a + b, 0);
+  const contribs = segments.map((_, i) => hourly[i]?.pct ?? DEFAULT_CONTRIBUTIONS[i]);
+  const totalPct = contribs.reduce((a, b) => a + (Number(b) || 0), 0);
 
   const cumSalesTarget = [];
   const cumStretchTarget = [];
@@ -511,16 +513,16 @@ function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kp
     ? allRows.filter(r => !r.optional)
     : allRows;
   const nonSpacerCount = visibleRows.filter(r => !r.spacer).length;
-  const leadingHours = newView ? [8, 9] : [];
-  const totalColumns = segments.length + leadingHours.length + 2;
+  const firstVisible = newView ? 0 : 2;
+  const visibleSegments = segments.slice(firstVisible);
+  const totalColumns = visibleSegments.length + 2;
 
   return (
     <div className="wb-hs-wrap">
       <table className="wb-hs-table">
         <colgroup>
           <col className="wb-hs-label-col" />
-          {leadingHours.map(hour => <col key={`leading-${hour}`} className="wb-hs-leading-col" />)}
-          {segments.map((seg, i) => <col key={i} />)}
+          {visibleSegments.map((seg, i) => <col key={i} />)}
           <col className="wb-hs-notes-col" />
         </colgroup>
         <thead>
@@ -529,8 +531,7 @@ function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kp
           </tr>
           <tr>
             <th className="wb-hs-row-label">HOURS OF OPERATIONS</th>
-            {leadingHours.map(hour => <th key={hour} className="wb-hs-col-header">{hour}am - {hour + 1}am</th>)}
-            {segments.map((seg, i) => (
+            {visibleSegments.map((seg, i) => (
               <th key={i} className="wb-hs-col-header">{seg.label}</th>
             ))}
             <th className="wb-hs-notes-header">NOTES &amp; OBSERVATIONS<br/><span className="wb-hs-notes-sub">Complete throughout the day</span></th>
@@ -542,8 +543,7 @@ function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kp
             return (
               <tr key={ri} className={`${row.highlight ? 'wb-hs-highlight' : ''}${row.optional ? ' wb-hs-row-optional' : ''}`}>
                 <td className="wb-hs-row-label">{row.label}{row.extra && <span style={{ marginLeft: 8 }}>{row.extra}</span>}</td>
-                {leadingHours.map(hour => <td key={`leading-${hour}`} className="wb-hs-cell wb-hs-leading-cell" aria-hidden="true" />)}
-                {row.cells.map((cell, ci) => {
+                {row.cells.slice(firstVisible).map((cell, ci) => {
                   if (cell.editable && cell.onChange) {
                     return (
                       <EditCell
@@ -553,7 +553,7 @@ function HourlySegments({ goals, hourly, setHourly, onHourlyCommit, segments, kp
                         format={cell.format}
                         text={cell.text}
                         placeholder={newView ? '' : undefined}
-                        ariaLabel={`Edit ${row.label} ${segments[ci].label}`}
+                        ariaLabel={`Edit ${row.label} ${visibleSegments[ci].label}`}
                         className={`wb-hs-cell${cell.derived ? ' wb-hs-derived' : ''}`}
                       />
                     );

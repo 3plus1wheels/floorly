@@ -9,8 +9,8 @@ GOAL_FIELDS = {
     'monthSalesPlan', 'monthToDateSales',
 }
 HOURLY_FIELDS = {'pct', 'actual', 'traffic', 'transactions', 'upt', 'atv', 'other', 'cel'}
-SEGMENT_HOURS = tuple(str(hour) for hour in range(10, 21))
-DEFAULT_CONTRIBUTIONS = (3, 6, 8, 9, 12, 15, 12, 9, 9, 9, 8)
+SEGMENT_HOURS = tuple(str(hour) for hour in range(8, 21))
+DEFAULT_CONTRIBUTIONS = (None, None, 3, 6, 8, 9, 12, 15, 12, 9, 9, 9, 8)
 
 
 def _json_number(value):
